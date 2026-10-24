@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="theme-color" content="#0b0d0c">
+		<meta name="description" content="Spot a neighborhood issue. Build local support. Get it in front of the people who can fix it.">
+		<title>Sidewalk — Community Civic Tools</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+		<link rel="stylesheet" href="style.css">
+		<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
+		<script src="/vendor/leaflet-heat/leaflet-heat.js" defer></script>
+		<script src="app.js" defer></script>
+	</head>
+	<body>
+		<header class="topbar">
+			<a class="brand" href="#home" data-page-target="home" aria-label="Sidewalk home">
+				<span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+				<span>sidewalk<span class="brand-period">.</span></span>
+			</a>
+			<nav class="page-nav" aria-label="Main navigation">
+				<button class="nav-link active" type="button" data-page-target="home">Home</button>
+				<button class="nav-link" type="button" data-page-target="report">Report issues</button>
+				<button class="nav-link" type="button" data-page-target="tracker">Issue tracker</button>
+				<button class="nav-link" type="button" data-page-target="petitions">Petitions</button>
+				<button class="nav-link" type="button" data-page-target="heatmap">Heatmap</button>
+				<button class="nav-link" type="button" data-page-target="converter">Sideassist</button>
+			</nav>
+			<div class="topbar-right">
+				<button class="area-button" id="area-button" type="button" aria-label="Search neighborhoods"><span class="area-pin">⌖</span><span id="selected-area-label">The Carolinas</span><span class="chevron">⌄</span></button>
+				<button class="avatar" id="profile-button" type="button" aria-label="Sign in or switch account">JD</button>
+			</div>
+		</header>
+
+		<section class="page-view home-page" id="home-page" data-page-section="home">
+			<div class="home-shell">
+				<div class="eyebrow"><span class="eyebrow-line"></span> LOCAL ACTION, IN MOTION</div>
+				<h1>Make your community<br><span>hard to ignore.</span></h1>
+				<p class="home-intro">Report what needs fixing, make sense of city processes, and keep track of what happens next.</p>
+				<div class="home-tools" aria-label="Sidewalk tools">
+					<button class="home-tool" type="button" data-page-target="report"><span class="home-tool-number">01</span><span><strong>Report issues</strong><small>Pin an issue and bring it to your community.</small></span><span class="home-tool-arrow">↗</span></button>
+					<button class="home-tool" type="button" data-page-target="tracker"><span class="home-tool-number">02</span><span><strong>Issue tracker</strong><small>See the current stage and follow progress.</small></span><span class="home-tool-arrow">↗</span></button>
+					<button class="home-tool" type="button" data-page-target="petitions"><span class="home-tool-number">03</span><span><strong>Petitions</strong><small>Find issues nearing a neighborhood tipping point.</small></span><span class="home-tool-arrow">↗</span></button>
+					<button class="home-tool" type="button" data-page-target="heatmap"><span class="home-tool-number">04</span><span><strong>Heatmap</strong><small>Explore where reports and support are gathering.</small></span><span class="home-tool-arrow">↗</span></button>
+					<button class="home-tool" type="button" data-page-target="converter"><span class="home-tool-number">05</span><span><strong>Sideassist</strong><small>Turn a rough note into a clear public works request.</small></span><span class="home-tool-arrow">↗</span></button>
+				</div>
+				<div class="home-statline"><span class="live-dot"></span><span><strong id="home-issue-count">0</strong> community reports on the map</span></div>
+			</div>
+		</section>
+
+		<main class="workspace page-view" id="report-page" data-page-section="report" hidden>
+			<aside class="sidebar" aria-label="Neighborhood issues">
+				<div class="sidebar-heading">
+					<div class="eyebrow"><span class="eyebrow-line"></span> YOUR COMMUNITY</div>
+					<div class="heading-row"><h1>Small fixes.<br><span>Stronger blocks.</span></h1><span class="block-illustration" aria-hidden="true"><i></i><i></i><i></i><b></b></span></div>
+					<p class="intro">Spot local issues, bring neighbors together, and help move things forward.</p>
+				</div>
+
+				<div class="impact-strip" aria-label="Neighborhood impact">
+					<div><strong id="issue-total">12</strong><span>open issues</span></div>
+					<div class="impact-divider"></div>
+					<div><strong>286</strong><span>neighbors in</span></div>
+					<div class="impact-spark" aria-hidden="true">↗</div>
+				</div>
+
+					<div class="list-toolbar">
+					<div><h2>Community issues</h2><span class="nearby-label">ISSUES · <span id="result-count">4</span></span></div>
+					<button class="filter-button" id="filter-button" type="button" aria-label="Filter issues" title="Show all issue types">☷</button>
+				</div>
+				<div class="filter-tabs" role="group" aria-label="Filter issues by category">
+					<button class="filter-tab active" type="button" data-filter="all">All <span>4</span></button>
+					<button class="filter-tab" type="button" data-filter="safety">Safety</button>
+					<button class="filter-tab" type="button" data-filter="access">Access</button>
+					<button class="filter-tab" type="button" data-filter="parks">Parks</button>
+				</div>
+				<section class="issue-list" id="issue-list" aria-live="polite" aria-label="Nearby community issues"></section>
+				<button class="report-button" id="report-button" type="button"><span class="plus">+</span> Report a neighborhood issue</button>
+				<p class="sidebar-footnote"><span class="footnote-mark">i</span> Your location is never shown publicly.</p>
+			</aside>
+
+			<section class="map-area" aria-label="Map of neighborhood issues">
+				<div id="map" role="application" aria-label="Interactive neighborhood map"></div>
+				<div class="map-topline">
+					<div class="map-title"><span class="map-title-dot"></span><span id="map-area-label">The Carolinas</span><span class="map-title-separator">/</span><span class="muted" id="map-style-label">STREET MAP</span></div>
+					<div class="map-actions">
+						<button class="map-action" id="locate-button" type="button" title="Find my location" aria-label="Find my location">◎</button>
+						<div class="map-style-selector">
+							<button class="map-action layers-action" id="layers-button" type="button" title="Choose map type" aria-label="Choose map type" aria-haspopup="true" aria-expanded="false" aria-controls="map-style-menu">▦</button>
+							<div class="map-style-menu" id="map-style-menu" role="group" aria-label="Choose map type" hidden>
+								<button class="map-style-option" type="button" data-basemap="terrain" aria-pressed="false"><span class="map-style-glyph terrain-glyph" aria-hidden="true">⌁</span>Terrain</button>
+								<button class="map-style-option active" type="button" data-basemap="street" aria-pressed="true"><span class="map-style-glyph street-glyph" aria-hidden="true">▦</span>Street</button>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="map-legend"><span><i class="legend-dot urgent"></i> Needs support</span><span><i class="legend-dot active"></i> Gaining traction</span><span><i class="legend-dot priority-legend"></i> 10+ · High priority</span><span><i class="legend-dot ready"></i> 50 · Council-ready</span></div>
+				<div class="map-credit">A better block starts here. <span>↗</span></div>
+				<div class="map-loading" id="map-loading" aria-live="polite">Loading neighborhood map...</div>
+			</section>
+		</main>
+
+		<section class="page-view tool-page" id="converter-page" data-page-section="converter" hidden>
+			<div class="tool-page-heading"><div class="eyebrow"><span class="eyebrow-line"></span> SIDEASSIST · GEMINI CIVIC ASSISTANT</div><h1>From raw note<br><span>to ready request.</span></h1><p>Describe the issue in your own words. Sideassist will organize it into a professional, reviewable public works request.</p></div>
+			<div class="converter-layout">
+				<form class="converter-form" id="converter-form">
+					<label class="field-label" for="converter-message">What happened?</label>
+					<textarea id="converter-message" name="message" rows="6" maxlength="2000" placeholder="The stop sign at 4th and Main is hidden by tree branches, and drivers can’t see it until they’re in the intersection..." required></textarea>
+					<label class="field-label" for="converter-location">Location <span class="optional">OPTIONAL</span></label>
+					<input id="converter-location" name="location" maxlength="160" placeholder="Street, intersection, or nearby landmark">
+					<div class="converter-actions"><span class="form-hint">Review the draft before sending it.</span><button class="submit-button" id="converter-submit" type="submit">Create formal draft <span>→</span></button></div>
+					<p class="form-error" id="converter-error" role="alert"></p>
+				</form>
+				<section class="converter-result" id="converter-result" aria-live="polite" hidden>
+					<div class="result-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> DRAFT FOR REVIEW</div><h2 id="converter-title">Public works request</h2></div><span class="urgency-badge" id="converter-urgency"></span></div>
+					<div class="result-meta"><span id="converter-category"></span><span id="converter-result-location"></span></div>
+					<p class="result-summary" id="converter-summary"></p>
+					<label class="field-label" for="converter-subject">Email subject</label><input id="converter-subject" readonly>
+					<label class="field-label" for="converter-body">Email draft</label><textarea id="converter-body" rows="9" readonly></textarea>
+					<div class="converter-actions"><button class="secondary-button" id="converter-copy" type="button">Copy draft</button><button class="submit-button" id="converter-use-report" type="button">Use in report <span>→</span></button></div>
+					<p class="consent-note">Urgency is an AI suggestion, not an official safety assessment. If someone is in immediate danger, contact emergency services.</p>
+				</section>
+			</div>
+		</section>
+
+		<section class="page-view tool-page" id="tracker-page" data-page-section="tracker" hidden>
+			<div class="tool-page-heading compact-heading"><div class="eyebrow"><span class="eyebrow-line"></span> TRANSPARENT PROGRESS</div><h1>Issue tracker</h1><p>Follow reports from submission through resolution. This page refreshes every 15 seconds; status changes are posted by an authorized coordinator.</p></div>
+			<div class="tracker-layout">
+				<div class="tracker-map-wrap"><div id="tracker-map" class="secondary-map" role="application" aria-label="Map of all reported issues"></div><div class="map-attribution-note">All reported issues · shared map data</div></div>
+				<div class="tracker-content"><div class="section-toolbar"><h2>Track an issue</h2><span class="nearby-label">REPORTS · <span id="tracker-count">0</span></span></div><div class="tracker-issue-list" id="tracker-issues"></div><section class="tracker-detail" id="tracker-detail" aria-live="polite"><p class="empty-state">Select a report to see its timeline.</p></section>
+					<details class="admin-status-panel"><summary>Coordinator: update issue status</summary><p class="form-hint" id="coordinator-status-note">Requires a server-side ADMIN_TOKEN. Only coordinators should publish verified progress.</p><label class="field-label" for="tracker-admin-token">Coordinator token</label><input id="tracker-admin-token" type="password" autocomplete="off"><label class="field-label" for="tracker-new-status">New status</label><select id="tracker-new-status"><option value="community_priority">High-priority neighborhood issue</option><option value="sent_to_agency">Sent to local agency</option><option value="in_progress">Work in progress</option><option value="resolved">Resolved</option></select><label class="field-label" for="tracker-status-note">Update note <span class="optional">OPTIONAL</span></label><input id="tracker-status-note" maxlength="240" placeholder="Add a source or short update"><button class="secondary-button" id="tracker-update-status" type="button">Publish status update</button></details>
+				</div>
+			</div>
+		</section>
+
+		<section class="page-view tool-page" id="petitions-page" data-page-section="petitions" hidden>
+			<div class="tool-page-heading compact-heading"><div class="eyebrow"><span class="eyebrow-line"></span> COMMUNITY MOMENTUM</div><h1>Petitions</h1><p>Verified neighbors can endorse an issue. Ten endorsements flag it for priority review; 50 reaches the council-ready milestone.</p></div>
+			<div class="petition-summary"><div><strong>10</strong><span>endorsements · priority flag</span></div><div><strong>50</strong><span>endorsements · council-ready draft</span></div></div>
+			<section class="petition-list" id="petition-list" aria-live="polite" aria-label="Community petitions"></section>
+		</section>
+
+		<section class="page-view tool-page" id="heatmap-page" data-page-section="heatmap" hidden>
+			<div class="tool-page-heading compact-heading"><div class="eyebrow"><span class="eyebrow-line"></span> COMMUNITY ISSUE DENSITY</div><h1>Neighborhood heatmap</h1><p>Hotter areas indicate more nearby reports and endorsements. Colors are a visual summary, not an official safety rating.</p></div>
+			<div class="heatmap-layout"><div class="heatmap-map-wrap"><div id="heat-map" class="secondary-map" role="application" aria-label="Heatmap of reports and community support"></div><div class="heatmap-legend"><span><i class="heat-swatch low"></i>Fewer reports</span><span><i class="heat-swatch mid"></i>Growing support</span><span><i class="heat-swatch high"></i>High activity</span></div></div><div class="heatmap-sidebar"><div class="section-toolbar"><h2>Hotspots</h2><span class="nearby-label">CURRENT · <span id="hotspot-count">0</span></span></div><div id="hotspot-list" class="hotspot-list"></div></div></div>
+		</section>
+
+		<dialog class="modal" id="report-modal" aria-labelledby="report-title">
+			<form class="modal-content" id="report-form">
+				<button class="modal-close" type="button" data-close="report-modal" aria-label="Close">×</button>
+				<div class="eyebrow"><span class="eyebrow-line"></span> MAKE IT BETTER</div>
+				<h2 id="report-title">What needs fixing?</h2>
+				<p class="modal-intro">You can report as a guest. Sign in if you’d also like to support petitions and get email updates.</p>
+				<label class="field-label" for="issue-title">Issue title</label>
+				<input id="issue-title" name="title" maxlength="70" placeholder="e.g. Crosswalk paint has faded" required>
+				<label class="field-label" for="issue-category">What kind of issue?</label>
+				<select id="issue-category" name="category" required>
+					<option value="safety">Street safety</option><option value="access">Accessibility</option><option value="parks">Parks & public space</option><option value="lighting">Street lighting</option><option value="other">Something else</option>
+				</select>
+				<label class="field-label" for="issue-description">What’s happening?</label>
+				<textarea id="issue-description" name="description" rows="3" maxlength="400" placeholder="Where is it, and how does it affect the neighborhood?" required></textarea>
+				<div class="form-row">
+					<label class="field-label" for="issue-photo">Add a photo <span class="optional">OPTIONAL</span></label>
+					<input class="file-input" id="issue-photo" name="photo" type="file" accept="image/*">
+				</div>
+				<div class="location-note"><span>⌖</span><span><strong id="report-location-label">The Carolinas</strong><small id="report-location-help">Your report will be placed near this selected area. Add a precise pin if you like.</small></span><button class="pick-location" id="pick-location" type="button">Pick spot</button></div>
+				<p class="form-error" id="form-error" role="alert"></p>
+				<button class="submit-button" type="submit">Post to the neighborhood <span>→</span></button>
+				<p class="consent-note">By posting, you agree to keep reports respectful and specific.</p>
+			</form>
+		</dialog>
+
+		<dialog class="modal" id="account-modal" aria-labelledby="account-title">
+			<div class="modal-content">
+				<button class="modal-close" type="button" data-close="account-modal" aria-label="Close">×</button>
+				<div class="eyebrow"><span class="eyebrow-line"></span> SIDEWALK ACCOUNT</div>
+				<h2 id="account-title">Create your account</h2>
+				<p class="modal-intro" id="account-intro">Verify your email to support petitions and report neighborhood issues.</p>
+				<div class="active-account" id="active-account"></div>
+				<div class="account-mode" role="group" aria-label="Account action">
+					<button class="account-mode-button active" type="button" data-account-mode="register" aria-pressed="true">Create account</button>
+					<button class="account-mode-button" type="button" data-account-mode="login" aria-pressed="false">Sign in</button>
+				</div>
+				<div class="account-settings" id="account-settings" hidden>
+					<label class="email-updates-option"><input id="account-email-updates" type="checkbox"><span>Email me when petitions I support reach their goal.</span></label>
+					<button class="settings-save" id="save-email-preferences" type="button">Save email preference</button>
+				</div>
+				<form class="account-form" id="account-form">
+					<div id="account-name-field">
+						<label class="field-label" for="account-name">Your name</label>
+						<input id="account-name" name="name" maxlength="60" autocomplete="name" placeholder="e.g. Jordan Davis" required>
+					</div>
+					<label class="field-label" for="account-email">Email address</label>
+					<input id="account-email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.com" required>
+					<label class="field-label" for="account-password">Password</label>
+					<input id="account-password" name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" placeholder="At least 12 characters" required>
+					<label class="email-updates-option" id="email-updates-field"><input id="email-updates" name="emailUpdates" type="checkbox"><span>Email me when petitions I support reach their goal.</span></label>
+					<p class="account-error" id="account-error" role="alert"></p>
+					<a class="verification-link" id="verification-link" href="#" hidden></a>
+					<button class="submit-button" id="account-submit" type="submit">Create account <span>→</span></button>
+				</form>
+				<button class="guest-button" id="guest-button" type="button">Continue browsing as a guest</button>
+				<p class="email-delivery-note" id="email-delivery-note" role="status"></p>
+				<p class="consent-note">Only verified accounts can support petitions. Guests can still submit issue reports.</p>
+			</div>
+		</dialog>
+
+		<dialog class="modal search-modal" id="search-modal" aria-labelledby="search-title">
+			<div class="modal-content">
+				<button class="modal-close" type="button" data-close="search-modal" aria-label="Close">×</button>
+				<div class="eyebrow"><span class="eyebrow-line"></span> SET YOUR COMMUNITY</div>
+				<h2 id="search-title">Where should we look?</h2>
+				<p class="modal-intro">Search any neighborhood, city, or ZIP code.</p>
+				<form class="place-search-form" id="place-search-form">
+					<label class="sr-only" for="place-query">Neighborhood, city, or ZIP code</label>
+					<input id="place-query" name="query" type="search" autocomplete="off" placeholder="Try Portland, ME or 10001" minlength="2" required>
+					<button class="submit-button" id="place-search-submit" type="submit">Search <span>⌕</span></button>
+				</form>
+				<p class="search-status" id="search-status" role="status" aria-live="polite">Choose a result to move the map and set your report area.</p>
+				<div class="place-results" id="place-results" role="listbox" aria-label="Matching neighborhoods"></div>
+				<p class="search-attribution">Place results by <a href="https://www.openstreetmap.org/" target="_blank" rel="noreferrer">OpenStreetMap</a>.</p>
+			</div>
+		</dialog>
+
+		<dialog class="modal" id="petition-modal" aria-labelledby="petition-title">
+			<div class="modal-content petition-content">
+				<button class="modal-close" type="button" data-close="petition-modal" aria-label="Close">×</button>
+				<div class="eyebrow"><span class="eyebrow-line"></span> READY FOR THE NEXT STEP</div>
+				<h2 id="petition-title">Your neighbors showed up.</h2>
+				<p class="modal-intro">This issue has reached its local support goal. Review the message and send it to the right city department.</p>
+				<div class="email-preview"><div class="email-field"><span>TO</span><strong>Local public works department · verify contact</strong></div><div class="email-field"><span>SUBJECT</span><strong id="email-subject"></strong></div><div class="email-body" id="email-body"></div></div>
+				<a class="submit-button send-email" id="send-email" href="#">Review email in your mail app <span>↗</span></a>
+				<p class="consent-note">This demo prepares a draft for you to review; it does not send anything automatically.</p>
+			</div>
+		</dialog>
+
+		<div class="toast" id="toast" role="status" aria-live="polite"></div>
+		<section class="chat-widget" id="chat-widget" aria-label="Sidewalk Civic Assistant">
+			<div class="chat-panel" id="chat-panel" hidden>
+				<header class="chat-header">
+					<div><span class="chat-status-dot"></span><strong>Sidewalk Assistant</strong><small>Local civic help</small></div>
+				<button class="chat-close" id="chat-close" type="button" aria-label="Close assistant">×</button>
+				</header>
+				<div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-relevant="additions text">
+					<div class="chat-message assistant-message">Hi! I can help you describe a local issue, find the right next steps, or draft a clear request to your city.</div>
+				</div>
+				<form class="chat-form" id="chat-form">
+					<label class="sr-only" for="chat-input">Message Sidewalk Assistant</label>
+					<textarea id="chat-input" name="message" rows="1" maxlength="2000" placeholder="Ask about a local issue..." required></textarea>
+					<button class="chat-send" id="chat-send" type="submit" aria-label="Send message" title="Send message"><span aria-hidden="true">↑</span></button>
+				</form>
+				<p class="chat-disclaimer">AI can make mistakes. Confirm important details with your local agency.</p>
+			</div>
+			<button class="chat-launcher" id="chat-launcher" type="button" aria-expanded="false" aria-controls="chat-panel"><span aria-hidden="true">✳</span><span>Ask Sidewalk</span></button>
+		</section>
+	</body>
+</html>
