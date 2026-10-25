@@ -162,9 +162,10 @@ for (const row of db.prepare(`SELECT id, photo_data, created_at FROM issues
   }
 }
 
-const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
+const hasBrevo = Boolean(process.env.BREVO_API_KEY && process.env.SMTP_FROM);
+const hasSmtp = hasBrevo || Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
 const authAttempts = new Map();
-const mailer = hasSmtp ? nodemailer.createTransport({
+const smtpTransport = !hasBrevo && hasSmtp ? nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT || 587),
   secure: process.env.SMTP_SECURE === 'true',
@@ -173,8 +174,26 @@ const mailer = hasSmtp ? nodemailer.createTransport({
     : undefined,
 }) : null;
 
+// Brevo sends over HTTPS, which works on hosts that block SMTP ports (e.g. Railway Hobby).
+function parseFrom(from) {
+  const match = /^\s*(.*?)\s*<([^>]+)>\s*$/.exec(from || '');
+  return match ? { name: match[1] || 'Sidewalk', email: match[2] } : { name: 'Sidewalk', email: (from || '').trim() };
+}
+
+async function sendWithBrevo({ to, subject, text }) {
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': process.env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ sender: parseFrom(process.env.SMTP_FROM), to: [{ email: to }], subject, textContent: text }),
+  });
+  if (!response.ok) throw new Error(`Brevo email failed (${response.status}): ${await response.text()}`);
+  return response.json();
+}
+
+const mailer = hasBrevo ? { sendMail: sendWithBrevo } : smtpTransport;
+
 function sendEmail(message) {
-  if (!mailer) throw new Error('SMTP is not configured. Add SMTP_HOST and SMTP_FROM to .env.');
+  if (!mailer) throw new Error('Email is not configured. Add BREVO_API_KEY or SMTP_HOST, plus SMTP_FROM, to .env.');
   return mailer.sendMail({ from: process.env.SMTP_FROM, ...message });
 }
 
