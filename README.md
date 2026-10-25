@@ -34,6 +34,8 @@ Small infrastructure problems are easy to notice and hard to get fixed. A pothol
 | **Tracker** | Six-stage status timeline per issue; coordinator tools to advance status (protected by an admin token) |
 | **Sideassist (AI)** | Chat assistant, formal-request drafter with suggested urgency, and an automatic first review of every new report |
 | **Accounts** | Email verification, resend link, forgot/reset password, 8-character minimum, unsubscribe links in every email |
+| **Anti-abuse** | Cloudflare Turnstile bot check, throwaway-email blocking, rate limits and daily AI caps, endorsements that only count once an account is a day old, burst detection for fake accounts on one network, duplicate-report detection, link and profanity filter |
+| **Moderation** | "Flag this report" for neighbors (3 flags hides a report), and coordinator tools to hide, restore, delete, and suspend the person or network behind a report |
 | **Design** | Street-marking look (asphalt and road-paint yellow), light and dark mode, bottom tab bar and slide-up sheets on phones, top nav on desktop |
 
 ## How it works
@@ -85,7 +87,9 @@ Locally you don't need any keys. Without email set up, new accounts are signed i
 | `BREVO_API_KEY` | Sends verification, reset, and update emails over HTTPS |
 | `SMTP_FROM` | Sender, e.g. `Sidewalk <you@example.com>` (must be verified in Brevo) |
 | `APP_URL` | Public URL of the site, used in email links |
-| `ADMIN_TOKEN` | Coordinator password for moving issues along the tracker |
+| `ADMIN_TOKEN` | Coordinator password for moving issues along the tracker and moderating reports |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile "I'm human" check on sign-up, guest reports, and password reset |
+| `ENDORSE_MIN_ACCOUNT_AGE_HOURS` | How old an account must be before its endorsements count (default 24; 0 for demos) |
 | `SQLITE_PATH` | Where the database file lives (`/data/sidewalk.sqlite` on Railway) |
 | `NODE_ENV`, `TRUST_PROXY` | Set to `production` and `true` when deployed behind a host |
 

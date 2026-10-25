@@ -5,12 +5,24 @@ const express = require('express');
 const nodemailer = require('nodemailer');
 const { DatabaseSync } = require('node:sqlite');
 const { limit, takeAiCredit, adminLocked, recordAdminFailure, clearAdminFailures, clientIp, cleanText, inCarolinas } = require('./security');
+const { requireHuman, turnstileSiteKey, isThrowawayEmail, checkPublicText, setNetworkKey, networkId } = require('./abuse');
 
 const router = express.Router();
 const scrypt = promisify(crypto.scrypt);
 const GOAL = 50;
 const PRIORITY_THRESHOLD = 10;
 const SESSION_TTL = 30 * 24 * 60 * 60 * 1000;
+// Endorsements from brand-new accounts are recorded right away but only count toward
+// the 10/50 thresholds once the account is this old (set 0 to turn off, e.g. for a demo).
+const ENDORSE_MIN_AGE_MS = Number(process.env.ENDORSE_MIN_ACCOUNT_AGE_HOURS ?? 24) * 60 * 60 * 1000;
+// This many endorsements on one issue, within a day, from new accounts on the same network
+// pauses automatic promotion until a coordinator reviews it.
+const BURST_ENDORSEMENTS = Number(process.env.ENDORSE_BURST_LIMIT || 5);
+const NEW_ACCOUNT_MS = 7 * 24 * 60 * 60 * 1000;
+// Distinct community flags that hide a report until a coordinator looks at it.
+const FLAGS_TO_HIDE = Number(process.env.FLAGS_TO_HIDE || 3);
+const DUPLICATE_RADIUS_M = 60;
+const DUPLICATE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const ISSUE_STAGES = ['submitted', 'ai_reviewed', 'community_priority', 'sent_to_agency', 'in_progress', 'resolved'];
 const db = new DatabaseSync(process.env.SQLITE_PATH || path.join(__dirname, 'sidewalk.sqlite'));
 
@@ -95,6 +107,41 @@ if (!userColumns.has('reset_expires_at')) db.exec('ALTER TABLE users ADD COLUMN 
 const issueColumns = new Set(db.prepare('PRAGMA table_info(issues)').all().map((column) => column.name));
 if (!issueColumns.has('status')) db.exec("ALTER TABLE issues ADD COLUMN status TEXT NOT NULL DEFAULT 'submitted'");
 if (!issueColumns.has('status_updated_at')) db.exec('ALTER TABLE issues ADD COLUMN status_updated_at INTEGER');
+// Moderation and anti-abuse columns (added in place so existing data is kept).
+if (!userColumns.has('suspended_at')) db.exec('ALTER TABLE users ADD COLUMN suspended_at INTEGER');
+if (!issueColumns.has('hidden_at')) db.exec('ALTER TABLE issues ADD COLUMN hidden_at INTEGER');
+if (!issueColumns.has('hidden_reason')) db.exec('ALTER TABLE issues ADD COLUMN hidden_reason TEXT');
+if (!issueColumns.has('needs_review')) db.exec('ALTER TABLE issues ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0');
+if (!issueColumns.has('review_reason')) db.exec('ALTER TABLE issues ADD COLUMN review_reason TEXT');
+if (!issueColumns.has('reporter_network')) db.exec('ALTER TABLE issues ADD COLUMN reporter_network TEXT');
+const supportColumns = new Set(db.prepare('PRAGMA table_info(supports)').all().map((column) => column.name));
+if (!supportColumns.has('network')) db.exec('ALTER TABLE supports ADD COLUMN network TEXT');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS issue_flags (
+    issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (issue_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS blocked_networks (
+    network TEXT PRIMARY KEY,
+    reason TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS supports_network_idx ON supports(issue_id, network, created_at);
+`);
+// A random secret, created once, used to fingerprint networks without storing IP addresses.
+let storedNetworkKey = db.prepare("SELECT value FROM app_settings WHERE key = 'network_key'").get()?.value;
+if (!storedNetworkKey) {
+  storedNetworkKey = crypto.randomBytes(32).toString('hex');
+  db.prepare("INSERT INTO app_settings (key, value) VALUES ('network_key', ?)").run(storedNetworkKey);
+}
+setNetworkKey(storedNetworkKey);
 
 const seedIssues = [
   ['crosswalk', 'Crosswalk needs a fresh coat', 'safety', 'Street safety', 'The paint has almost disappeared at the school crossing on Maple and 4th.', 38, 'Charlotte, NC', 35.2271, -80.8431],
@@ -240,7 +287,7 @@ function userFromRequest(req) {
   if (!token) return null;
   return db.prepare(`SELECT users.id, users.name, users.email, users.email_updates
     FROM sessions JOIN users ON users.id = sessions.user_id
-    WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.verified_at IS NOT NULL`)
+    WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.verified_at IS NOT NULL AND users.suspended_at IS NULL`)
     .get(hashToken(token), Date.now()) || null;
 }
 
@@ -334,8 +381,98 @@ async function reviewIssueWithAi(issueId, ai) {
   }
 }
 
+function metersBetween(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Endorsements that count toward thresholds, and ones still waiting on account age.
+function supportCounts(issueId) {
+  const row = db.prepare(`SELECT
+      SUM(CASE WHEN users.created_at <= ? THEN 1 ELSE 0 END) AS counted,
+      SUM(CASE WHEN users.created_at > ? THEN 1 ELSE 0 END) AS pending
+    FROM supports JOIN users ON users.id = supports.user_id
+    WHERE supports.issue_id = ? AND users.suspended_at IS NULL`).get(Date.now() - ENDORSE_MIN_AGE_MS, Date.now() - ENDORSE_MIN_AGE_MS, issueId);
+  return { counted: row.counted || 0, pending: row.pending || 0 };
+}
+
+function endorsementTotal(issue) {
+  return issue.base_supporters + supportCounts(issue.id).counted;
+}
+
+async function sendGoalEmails(issue) {
+  if (!mailer) return;
+  const supporters = db.prepare(`SELECT DISTINCT users.id, users.email FROM supports
+    JOIN users ON users.id = supports.user_id
+    WHERE supports.issue_id = ? AND users.verified_at IS NOT NULL AND users.suspended_at IS NULL AND users.email_updates = 1`).all(issue.id);
+  const baseUrl = appUrl();
+  await Promise.allSettled(supporters.map(async ({ id, email }) => {
+    const unsubscribeToken = crypto.randomBytes(32).toString('hex');
+    db.prepare('INSERT INTO email_unsubscribe_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)')
+      .run(hashToken(unsubscribeToken), id, Date.now());
+    await sendEmail({
+      to: email,
+      subject: `Petition goal reached: ${issue.title}`,
+      text: `The issue you supported has reached ${GOAL} local supporters.\n\n${issue.title}\n${issue.description}\n\nOpen Sidewalk to review the community's next steps: ${baseUrl}\n\nTurn off petition email updates: ${baseUrl}/api/email/unsubscribe?token=${unsubscribeToken}`,
+    });
+  }));
+}
+
+// Applies the 10 (priority) and 50 (goal) thresholds. Paused while an issue is under review.
+async function evaluateThresholds(issueId) {
+  const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+  if (!issue || issue.hidden_at || issue.needs_review) return { count: issue ? endorsementTotal(issue) : 0, priorityReached: false, goalReached: false };
+  const count = endorsementTotal(issue);
+  let priorityReached = false;
+  let goalReached = false;
+  if (count >= PRIORITY_THRESHOLD && ['submitted', 'ai_reviewed'].includes(issue.status)) {
+    await transitionIssue(issue, 'community_priority', `Reached the ${PRIORITY_THRESHOLD}-endorsement community priority threshold.`);
+    priorityReached = true;
+  }
+  if (count >= GOAL && !issue.goal_notified_at) {
+    const claimed = db.prepare('UPDATE issues SET goal_notified_at = ? WHERE id = ? AND goal_notified_at IS NULL').run(Date.now(), issue.id);
+    if (claimed.changes) {
+      goalReached = true;
+      await sendGoalEmails(issue);
+    }
+  }
+  return { count, priorityReached, goalReached };
+}
+
+// Endorsements from new accounts start counting once they're old enough, so re-check
+// open issues every few minutes.
+setInterval(async () => {
+  const open = db.prepare(`SELECT id FROM issues WHERE hidden_at IS NULL AND needs_review = 0
+    AND (status IN ('submitted', 'ai_reviewed') OR goal_notified_at IS NULL)`).all();
+  for (const { id } of open) {
+    try { await evaluateThresholds(id); } catch (error) { console.error('Threshold check failed:', error.message); }
+  }
+}, 10 * 60 * 1000).unref();
+
+// Flags an issue for coordinator review if one network sends a burst of endorsements
+// from new accounts.
+function checkEndorsementBurst(issueId, network) {
+  if (!network) return false;
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const burst = db.prepare(`SELECT COUNT(*) AS total FROM supports JOIN users ON users.id = supports.user_id
+    WHERE supports.issue_id = ? AND supports.network = ? AND supports.created_at > ? AND users.created_at > ?`)
+    .get(issueId, network, since, Date.now() - NEW_ACCOUNT_MS).total;
+  if (burst < BURST_ENDORSEMENTS) return false;
+  const changed = db.prepare("UPDATE issues SET needs_review = 1, review_reason = ? WHERE id = ? AND needs_review = 0")
+    .run(`${burst} endorsements in a day from new accounts on one network`, issueId);
+  if (changed.changes) console.warn(`Issue ${issueId} flagged for review: endorsement burst from one network (${burst}).`);
+  return true;
+}
+
+function isBlockedNetwork(network) {
+  return Boolean(network && db.prepare('SELECT 1 FROM blocked_networks WHERE network = ?').get(network));
+}
+
 function serializeIssue(row, userId) {
-  const signed = db.prepare('SELECT COUNT(*) AS total FROM supports WHERE issue_id = ?').get(row.id).total;
+  const { counted: signed, pending } = supportCounts(row.id);
   const userSupported = userId
     ? Boolean(db.prepare('SELECT 1 FROM supports WHERE issue_id = ? AND user_id = ?').get(row.id, userId))
     : false;
@@ -350,6 +487,9 @@ function serializeIssue(row, userId) {
     categoryLabel: row.category_label,
     description: row.description,
     supporters: row.base_supporters + signed,
+    pendingSupporters: pending,
+    underReview: Boolean(row.needs_review),
+    userFlagged: userId ? Boolean(db.prepare('SELECT 1 FROM issue_flags WHERE issue_id = ? AND user_id = ?').get(row.id, userId)) : false,
     distance: row.distance,
     lat: row.lat,
     lng: row.lng,
@@ -407,15 +547,20 @@ async function sendVerificationEmail(user) {
 }
 
 router.get('/auth/me', (req, res) => {
-  res.json({ user: req.user ? publicUser(req.user) : null, emailConfigured: hasSmtp });
+  res.json({ user: req.user ? publicUser(req.user) : null, emailConfigured: hasSmtp, turnstileSiteKey: turnstileSiteKey() });
 });
 
-router.post('/auth/register', rateLimit(8, 60 * 60 * 1000), async (req, res) => {
+const accountsPerNetwork = limit({ name: 'signup-day', max: Number(process.env.SIGNUPS_PER_NETWORK_PER_DAY || 10), windowMs: 24 * 60 * 60 * 1000, successOnly: true, message: 'Too many new accounts from your network today. Please try again tomorrow.' });
+
+router.post('/auth/register', rateLimit(8, 60 * 60 * 1000), accountsPerNetwork, requireHuman(), async (req, res) => {
   const { name, password, emailUpdates } = req.body || {};
   const cleanName = cleanText(name);
   const cleanEmail = cleanEmailFrom(req.body?.email);
   if (cleanName.length < 2 || cleanName.length > 60) return res.status(400).json({ error: 'Enter a name between 2 and 60 characters.', field: 'name' });
   if (!validEmail(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.', field: 'email' });
+  if (checkPublicText(cleanName)) return res.status(400).json({ error: 'Choose a different display name.', field: 'name' });
+  if (isThrowawayEmail(cleanEmail)) return res.status(400).json({ error: 'Temporary or throwaway email addresses can’t be used. Use your regular email.', field: 'email' });
+  if (isBlockedNetwork(networkId(clientIp(req)))) return res.status(403).json({ error: 'New accounts can’t be created from this network.' });
   if (!validPassword(password)) return res.status(400).json({ error: `Use a password with at least ${MIN_PASSWORD} characters.`, field: 'password' });
   if (!mailer && process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'Sign-up is paused until email is configured on the server.' });
 
@@ -482,6 +627,7 @@ router.post('/auth/login', rateLimit(10, 15 * 60 * 1000), async (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   const passwordOk = await verifyPassword(password, user?.password_hash || DUMMY_HASH);
   if (!user || !passwordOk) return res.status(401).json({ error: 'That email and password don’t match. Check them, or reset your password.' });
+  if (user.suspended_at) return res.status(403).json({ error: 'This account has been suspended for breaking Sidewalk’s community guidelines.' });
   if (!user.verified_at) {
     if (!mailer && process.env.NODE_ENV !== 'production') {
       db.prepare('UPDATE users SET verified_at = ?, verify_token_hash = NULL, verify_expires_at = NULL, email_updates = 0 WHERE id = ?').run(Date.now(), user.id);
@@ -494,7 +640,7 @@ router.post('/auth/login', rateLimit(10, 15 * 60 * 1000), async (req, res) => {
   res.json({ user: publicUser(user), emailConfigured: hasSmtp });
 });
 
-router.post('/auth/forgot-password', rateLimit(5, 60 * 60 * 1000), async (req, res) => {
+router.post('/auth/forgot-password', rateLimit(5, 60 * 60 * 1000), requireHuman(), async (req, res) => {
   const email = cleanEmailFrom(req.body?.email);
   if (!validEmail(email)) return res.status(400).json({ error: 'Enter a valid email address.', field: 'email' });
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
@@ -561,7 +707,8 @@ router.get('/email/unsubscribe', limit({ name: 'unsubscribe', max: 30, windowMs:
 });
 
 router.get('/issues', (req, res) => {
-  const rows = db.prepare('SELECT * FROM issues ORDER BY created_at DESC').all();
+  const rows = db.prepare(`SELECT issues.* FROM issues LEFT JOIN users ON users.id = issues.created_by
+    WHERE issues.hidden_at IS NULL AND users.suspended_at IS NULL ORDER BY issues.created_at DESC`).all();
   res.json({
     issues: rows.map((row) => serializeIssue(row, req.user?.id)),
     priorityThreshold: PRIORITY_THRESHOLD,
@@ -571,16 +718,18 @@ router.get('/issues', (req, res) => {
 });
 
 router.get('/photos/:id', (req, res) => {
-  const photo = db.prepare('SELECT mime, data FROM issue_photos WHERE id = ?').get(req.params.id);
-  if (!photo) return res.status(404).json({ error: 'Photo not found.' });
+  const photo = db.prepare(`SELECT issue_photos.mime, issue_photos.data, issues.hidden_at FROM issue_photos
+    JOIN issues ON issues.id = issue_photos.issue_id WHERE issue_photos.id = ?`).get(req.params.id);
+  if (!photo || (photo.hidden_at && !isCoordinator(req))) return res.status(404).json({ error: 'Photo not found.' });
   res.setHeader('Content-Type', photo.mime);
-  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  // Cached for a day (not forever) so a hidden report's photos stop showing reasonably soon.
+  res.setHeader('Cache-Control', 'public, max-age=86400');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.send(Buffer.from(photo.data));
 });
 
 router.get('/issues/:id', (req, res) => {
-  const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  const issue = db.prepare('SELECT * FROM issues WHERE id = ? AND hidden_at IS NULL').get(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Issue not found.' });
   res.json({ issue: serializeIssue(issue, req.user?.id), priorityThreshold: PRIORITY_THRESHOLD, petitionGoal: GOAL });
 });
@@ -598,21 +747,25 @@ router.delete('/issues/:id/subscribe', requireVerifiedUser, limit({ name: 'follo
   res.json({ subscribed: false });
 });
 
-router.patch('/issues/:id/status', async (req, res) => {
-  if (!process.env.ADMIN_TOKEN) return res.status(503).json({ error: 'Issue status changes are not configured. Set ADMIN_TOKEN on the server.' });
+function requireCoordinator(req, res, next) {
+  if (!process.env.ADMIN_TOKEN) return res.status(503).json({ error: 'Coordinator tools are off. Set ADMIN_TOKEN on the server.' });
   if (adminLocked(req)) return res.status(429).json({ error: 'Too many wrong coordinator tokens. Coordinator tools are locked for 15 minutes on this network.' });
   if (!isCoordinator(req)) {
     recordAdminFailure(req);
-    console.warn(`Coordinator token rejected from ${clientIp(req)} for issue ${req.params.id}`);
+    console.warn(`Coordinator token rejected from ${clientIp(req)} on ${req.method} ${req.path}`);
     return res.status(403).json({ error: 'Coordinator token is invalid.' });
   }
   clearAdminFailures(req);
+  next();
+}
+
+router.patch('/issues/:id/status', requireCoordinator, async (req, res) => {
   const { status } = req.body || {};
   const note = cleanText(req.body?.note).slice(0, 240);
   if (!ISSUE_STAGES.includes(status) || status === 'submitted') return res.status(400).json({ error: 'Choose a valid next issue status.' });
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Issue not found.' });
-  const endorsementCount = issue.base_supporters + db.prepare('SELECT COUNT(*) AS total FROM supports WHERE issue_id = ?').get(issue.id).total;
+  const endorsementCount = endorsementTotal(issue);
   const allowedNext = {
     submitted: [],
     ai_reviewed: endorsementCount >= PRIORITY_THRESHOLD ? ['community_priority', 'sent_to_agency'] : ['sent_to_agency'],
@@ -635,8 +788,10 @@ router.patch('/issues/:id/status', async (req, res) => {
 const reportHourly = limit({ name: 'report-hour', max: 6, windowMs: 60 * 60 * 1000, by: 'ip+user', successOnly: true, message: 'You’ve posted several reports in the last hour. Please wait a bit before posting another.' });
 const reportDaily = limit({ name: 'report-day', max: 20, windowMs: 24 * 60 * 60 * 1000, by: 'ip+user', successOnly: true, message: 'You’ve reached today’s limit for new reports. Please try again tomorrow.' });
 
-router.post('/issues', reportHourly, reportDaily, async (req, res) => {
+router.post('/issues', reportHourly, reportDaily, requireHuman((req) => !req.user), async (req, res) => {
   const { category, lat, lng, photo } = req.body || {};
+  const network = networkId(clientIp(req));
+  if (isBlockedNetwork(network)) return res.status(403).json({ error: 'Reports can’t be posted from this network.' });
   const title = cleanText(req.body?.title);
   const description = cleanText(req.body?.description, { multiline: true });
   const distance = cleanText(req.body?.distance).slice(0, 100);
@@ -647,6 +802,23 @@ router.post('/issues', reportHourly, reportDaily, async (req, res) => {
   if (description.length < 5 || description.length > 400) return res.status(400).json({ error: 'Issue descriptions must be 5 to 400 characters.' });
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: 'Choose a valid map location.' });
   if (!inCarolinas(lat, lng)) return res.status(400).json({ error: 'Sidewalk covers North and South Carolina. Drop the pin on a spot inside the Carolinas.' });
+  const textProblem = checkPublicText(`${title}\n${description}`);
+  if (textProblem) return res.status(400).json({ error: textProblem });
+  // Same kind of problem already reported very close by, recently? Suggest backing it instead.
+  if (req.body?.confirmNotDuplicate !== true) {
+    const latPad = DUPLICATE_RADIUS_M / 111000;
+    const lngPad = latPad / Math.cos((lat * Math.PI) / 180);
+    const nearby = db.prepare(`SELECT * FROM issues WHERE category = ? AND hidden_at IS NULL AND status != 'resolved'
+      AND created_at > ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? ORDER BY created_at DESC`)
+      .all(category, Date.now() - DUPLICATE_WINDOW_MS, lat - latPad, lat + latPad, lng - lngPad, lng + lngPad);
+    const match = nearby.find((row) => metersBetween(lat, lng, row.lat, row.lng) <= DUPLICATE_RADIUS_M);
+    if (match) {
+      return res.status(409).json({
+        error: 'Someone already reported this kind of problem right here.',
+        duplicate: serializeIssue(match, req.user?.id),
+      });
+    }
+  }
   if (rawPhotos.length > MAX_PHOTOS) return res.status(400).json({ error: `Attach up to ${MAX_PHOTOS} photos.` });
   let photos;
   try {
@@ -659,10 +831,11 @@ router.post('/issues', reportHourly, reportDaily, async (req, res) => {
   db.prepare(`INSERT INTO issues (id, title, category, category_label, description, distance, lat, lng, created_by, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, title, category, categories[category], description, distance || 'The Carolinas', lat, lng, req.user?.id || null, createdAt);
+  db.prepare('UPDATE issues SET reporter_network = ? WHERE id = ?').run(network, id);
   photos.forEach(({ mime, data }, position) => insertPhoto.run(crypto.randomUUID(), id, mime, data, position, createdAt));
   db.prepare('INSERT INTO issue_events (issue_id, status, note, created_at) VALUES (?, ?, ?, ?)')
     .run(id, 'submitted', 'Issue submitted to the community map.', createdAt);
-  if (req.user) db.prepare('INSERT INTO supports (issue_id, user_id, created_at) VALUES (?, ?, ?)').run(id, req.user.id, Date.now());
+  if (req.user) db.prepare('INSERT INTO supports (issue_id, user_id, created_at, network) VALUES (?, ?, ?, ?)').run(id, req.user.id, Date.now(), network);
   if (req.user) db.prepare('INSERT OR IGNORE INTO issue_subscriptions (issue_id, user_id, created_at) VALUES (?, ?, ?)').run(id, req.user.id, createdAt);
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(id);
   res.status(201).json({ issue: serializeIssue(issue, req.user?.id) });
@@ -670,43 +843,146 @@ router.post('/issues', reportHourly, reportDaily, async (req, res) => {
 });
 
 router.post('/issues/:id/support', requireVerifiedUser, limit({ name: 'endorse', max: 30, windowMs: 60 * 60 * 1000, by: 'ip+user', message: 'You’re endorsing reports very quickly. Please wait a bit and try again.' }), async (req, res) => {
-  const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  const issue = db.prepare('SELECT * FROM issues WHERE id = ? AND hidden_at IS NULL').get(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Issue not found.' });
+  const network = networkId(clientIp(req));
   try {
-    db.prepare('INSERT INTO supports (issue_id, user_id, created_at) VALUES (?, ?, ?)').run(issue.id, req.user.id, Date.now());
+    db.prepare('INSERT INTO supports (issue_id, user_id, created_at, network) VALUES (?, ?, ?, ?)').run(issue.id, req.user.id, Date.now(), network);
   } catch (error) {
     if (String(error.message).includes('UNIQUE constraint failed')) return res.status(409).json({ error: 'You already supported this issue.' });
     throw error;
   }
-  const count = issue.base_supporters + db.prepare('SELECT COUNT(*) AS total FROM supports WHERE issue_id = ?').get(issue.id).total;
   db.prepare('INSERT OR IGNORE INTO issue_subscriptions (issue_id, user_id, created_at) VALUES (?, ?, ?)').run(issue.id, req.user.id, Date.now());
-  let priorityReached = false;
-  if (count >= PRIORITY_THRESHOLD && ['submitted', 'ai_reviewed'].includes(issue.status)) {
-    await transitionIssue(issue, 'community_priority', `Reached the ${PRIORITY_THRESHOLD}-endorsement community priority threshold.`);
-    priorityReached = true;
+  const underReview = checkEndorsementBurst(issue.id, network);
+  const { count, priorityReached, goalReached } = await evaluateThresholds(issue.id);
+  const account = db.prepare('SELECT created_at FROM users WHERE id = ?').get(req.user.id);
+  const pending = account.created_at > Date.now() - ENDORSE_MIN_AGE_MS;
+  res.json({ count, pending, pendingSupporters: supportCounts(issue.id).pending, underReview, goalReached, priorityReached });
+});
+
+// ---------- Community flags ----------
+const FLAG_REASONS = {
+  spam: 'Spam or advertising',
+  offensive: 'Offensive or hateful',
+  fake: 'Not a real problem',
+  private: 'Shows private information or people',
+  duplicate: 'Duplicate of another report',
+  other: 'Something else',
+};
+
+router.post('/issues/:id/flag', requireVerifiedUser, limit({ name: 'flag', max: 20, windowMs: 24 * 60 * 60 * 1000, by: 'ip+user', message: 'You’ve flagged a lot of reports today. A coordinator will review them.' }), (req, res) => {
+  const reason = typeof req.body?.reason === 'string' && FLAG_REASONS[req.body.reason] ? req.body.reason : null;
+  if (!reason) return res.status(400).json({ error: 'Choose a reason for flagging this report.' });
+  const issue = db.prepare('SELECT * FROM issues WHERE id = ? AND hidden_at IS NULL').get(req.params.id);
+  if (!issue) return res.status(404).json({ error: 'Issue not found.' });
+  db.prepare('INSERT OR IGNORE INTO issue_flags (issue_id, user_id, reason, created_at) VALUES (?, ?, ?, ?)').run(issue.id, req.user.id, reason, Date.now());
+  const flags = db.prepare('SELECT COUNT(*) AS total FROM issue_flags WHERE issue_id = ?').get(issue.id).total;
+  let hidden = false;
+  if (flags >= FLAGS_TO_HIDE) {
+    db.prepare('UPDATE issues SET hidden_at = ?, hidden_reason = ? WHERE id = ? AND hidden_at IS NULL')
+      .run(Date.now(), `Hidden automatically after ${flags} community flags`, issue.id);
+    hidden = true;
+    console.warn(`Issue ${issue.id} hidden automatically after ${flags} flags.`);
   }
-  let goalReached = false;
-  if (count >= GOAL && !issue.goal_notified_at) {
-    db.prepare('UPDATE issues SET goal_notified_at = ? WHERE id = ? AND goal_notified_at IS NULL').run(Date.now(), issue.id);
-    goalReached = true;
-    if (mailer) {
-      const supporters = db.prepare(`SELECT DISTINCT users.id, users.email FROM supports
-        JOIN users ON users.id = supports.user_id
-        WHERE supports.issue_id = ? AND users.verified_at IS NOT NULL AND users.email_updates = 1`).all(issue.id);
-      const appUrl = (process.env.APP_URL || `http://localhost:${process.env.PORT || 3001}`).replace(/\/$/, '');
-      await Promise.allSettled(supporters.map(async ({ id, email }) => {
-        const unsubscribeToken = crypto.randomBytes(32).toString('hex');
-        db.prepare('INSERT INTO email_unsubscribe_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)')
-          .run(hashToken(unsubscribeToken), id, Date.now());
-        await sendEmail({
-          to: email,
-          subject: `Petition goal reached: ${issue.title}`,
-          text: `The issue you supported has reached ${GOAL} local supporters.\n\n${issue.title}\n${issue.description}\n\nOpen Sidewalk to review the community's next steps: ${appUrl}\n\nTurn off petition email updates: ${appUrl}/api/email/unsubscribe?token=${unsubscribeToken}`,
-        });
-      }));
-    }
+  res.json({ flagged: true, hidden });
+});
+
+// ---------- Coordinator moderation ----------
+function moderationView(row) {
+  const flags = db.prepare('SELECT reason, COUNT(*) AS total FROM issue_flags WHERE issue_id = ? GROUP BY reason ORDER BY total DESC').all(row.id);
+  const reporter = row.created_by ? db.prepare('SELECT id, name, email, created_at, suspended_at FROM users WHERE id = ?').get(row.created_by) : null;
+  const base = serializeIssue(row);
+  return {
+    ...base,
+    hidden: Boolean(row.hidden_at),
+    hiddenReason: row.hidden_reason,
+    reviewReason: row.review_reason,
+    flags: flags.map((f) => ({ reason: FLAG_REASONS[f.reason] || f.reason, total: f.total })),
+    flagTotal: flags.reduce((sum, f) => sum + f.total, 0),
+    reporter: reporter
+      ? { id: reporter.id, name: reporter.name, email: reporter.email, joinedAt: reporter.created_at, suspended: Boolean(reporter.suspended_at) }
+      : { guest: true, networkBlocked: isBlockedNetwork(row.reporter_network) },
+  };
+}
+
+router.get('/admin/moderation', requireCoordinator, (req, res) => {
+  const rows = db.prepare(`SELECT issues.* FROM issues
+    WHERE issues.hidden_at IS NOT NULL OR issues.needs_review = 1
+      OR EXISTS (SELECT 1 FROM issue_flags WHERE issue_flags.issue_id = issues.id)
+    ORDER BY COALESCE(issues.hidden_at, issues.created_at) DESC LIMIT 100`).all();
+  res.json({ items: rows.map(moderationView) });
+});
+
+router.get('/admin/issues/:id', requireCoordinator, (req, res) => {
+  const row = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Issue not found.' });
+  res.json({ item: moderationView(row) });
+});
+
+function adminIssue(req, res) {
+  const row = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  if (!row) res.status(404).json({ error: 'Issue not found.' });
+  return row;
+}
+
+router.post('/admin/issues/:id/hide', requireCoordinator, (req, res) => {
+  const row = adminIssue(req, res);
+  if (!row) return;
+  const reason = cleanText(req.body?.reason).slice(0, 160) || 'Hidden by a coordinator';
+  db.prepare('UPDATE issues SET hidden_at = ?, hidden_reason = ? WHERE id = ?').run(Date.now(), reason, row.id);
+  console.log(`Coordinator hid issue ${row.id} (from ${clientIp(req)}): ${reason}`);
+  res.json({ item: moderationView(db.prepare('SELECT * FROM issues WHERE id = ?').get(row.id)) });
+});
+
+router.post('/admin/issues/:id/restore', requireCoordinator, async (req, res) => {
+  const row = adminIssue(req, res);
+  if (!row) return;
+  // Restoring means a coordinator looked at it: clear flags and the review hold too.
+  db.prepare('UPDATE issues SET hidden_at = NULL, hidden_reason = NULL, needs_review = 0, review_reason = NULL WHERE id = ?').run(row.id);
+  db.prepare('DELETE FROM issue_flags WHERE issue_id = ?').run(row.id);
+  console.log(`Coordinator restored issue ${row.id} (from ${clientIp(req)})`);
+  await evaluateThresholds(row.id);
+  res.json({ item: moderationView(db.prepare('SELECT * FROM issues WHERE id = ?').get(row.id)) });
+});
+
+router.delete('/admin/issues/:id', requireCoordinator, (req, res) => {
+  const row = adminIssue(req, res);
+  if (!row) return;
+  db.prepare('DELETE FROM issues WHERE id = ?').run(row.id);
+  console.log(`Coordinator deleted issue ${row.id} "${row.title}" (from ${clientIp(req)})`);
+  res.json({ deleted: true });
+});
+
+// Suspends the person who posted a report. For guest reports, blocks the network they
+// posted from instead (stored only as a fingerprint, never as an IP address).
+router.post('/admin/issues/:id/suspend-reporter', requireCoordinator, (req, res) => {
+  const row = adminIssue(req, res);
+  if (!row) return;
+  const reason = cleanText(req.body?.reason).slice(0, 160) || 'Suspended by a coordinator';
+  if (row.created_by) {
+    db.prepare('UPDATE users SET suspended_at = ? WHERE id = ?').run(Date.now(), row.created_by);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.created_by);
+    // Their other networks can't be used to post as a guest either.
+    const networks = db.prepare(`SELECT DISTINCT network FROM supports WHERE user_id = ? AND network IS NOT NULL
+      UNION SELECT DISTINCT reporter_network FROM issues WHERE created_by = ? AND reporter_network IS NOT NULL`).all(row.created_by, row.created_by);
+    for (const { network } of networks) db.prepare('INSERT OR IGNORE INTO blocked_networks (network, reason, created_at) VALUES (?, ?, ?)').run(network, reason, Date.now());
+    console.log(`Coordinator suspended user ${row.created_by} via issue ${row.id} (from ${clientIp(req)})`);
+  } else if (row.reporter_network) {
+    db.prepare('INSERT OR IGNORE INTO blocked_networks (network, reason, created_at) VALUES (?, ?, ?)').run(row.reporter_network, reason, Date.now());
+    console.log(`Coordinator blocked the network of guest issue ${row.id} (from ${clientIp(req)})`);
+  } else {
+    return res.status(400).json({ error: 'This report has no account or network on record to suspend.' });
   }
-  res.json({ count, goalReached, priorityReached });
+  res.json({ item: moderationView(db.prepare('SELECT * FROM issues WHERE id = ?').get(row.id)) });
+});
+
+router.post('/admin/issues/:id/unsuspend-reporter', requireCoordinator, (req, res) => {
+  const row = adminIssue(req, res);
+  if (!row) return;
+  if (row.created_by) db.prepare('UPDATE users SET suspended_at = NULL WHERE id = ?').run(row.created_by);
+  if (row.reporter_network) db.prepare('DELETE FROM blocked_networks WHERE network = ?').run(row.reporter_network);
+  console.log(`Coordinator lifted the suspension for issue ${row.id}'s reporter (from ${clientIp(req)})`);
+  res.json({ item: moderationView(db.prepare('SELECT * FROM issues WHERE id = ?').get(row.id)) });
 });
 
 // Used by server.js for the health check and a clean shutdown.

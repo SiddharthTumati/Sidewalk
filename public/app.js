@@ -32,6 +32,10 @@ let activeFilter = "all";
 let selectedIssueId = null;
 let currentTrackerIssue = null;
 let coordinatorConfigured = false;
+let turnstileSiteKey = null;
+let confirmDuplicate = false;
+let duplicateIssueId = null;
+let flagIssueId = null;
 let emailConfigured = false;
 let activeUser = { ...GUEST };
 let currentArea = loadSavedArea();
@@ -127,9 +131,69 @@ function closeDialog(id) {
   if (dialog.open) dialog.close();
 }
 
+/* ---------- "I'm human" check (Cloudflare Turnstile) ---------- */
+// Only loaded when the server has Turnstile keys and a form actually needs it.
+let turnstileLoader = null;
+const turnstileWidgets = {};
+
+function loadTurnstile() {
+  if (window.turnstile) return Promise.resolve(window.turnstile);
+  if (!turnstileLoader) {
+    turnstileLoader = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.onload = () => resolve(window.turnstile);
+      script.onerror = () => { turnstileLoader = null; reject(new Error("The human check couldn't load. Check your connection and try again.")); };
+      document.head.append(script);
+    });
+  }
+  return turnstileLoader;
+}
+
+// Shows (and renders once) the check in `slotId` when `needed`; hides it otherwise.
+async function prepareTurnstile(slotId, needed) {
+  const slot = document.getElementById(slotId);
+  const show = Boolean(turnstileSiteKey && needed);
+  slot.hidden = !show;
+  if (!show || turnstileWidgets[slotId] !== undefined) return;
+  try {
+    const turnstile = await loadTurnstile();
+    turnstileWidgets[slotId] = turnstile.render(slot, {
+      sitekey: turnstileSiteKey,
+      theme: document.documentElement.dataset.theme === "dark" || matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+      size: "flexible",
+    });
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function turnstileToken(slotId) {
+  const slot = document.getElementById(slotId);
+  if (!turnstileSiteKey || slot.hidden) return undefined;
+  const id = turnstileWidgets[slotId];
+  return id !== undefined && window.turnstile ? window.turnstile.getResponse(id) || "" : "";
+}
+
+function resetTurnstile(slotId) {
+  const id = turnstileWidgets[slotId];
+  if (id !== undefined && window.turnstile) window.turnstile.reset(id);
+}
+
 function laneHtml(issue) {
   const progress = Math.min(100, Math.round((issue.supporters / GOAL) * 100));
   return `<div class="lane ${pinStatus(issue)}" role="progressbar" aria-valuemin="0" aria-valuemax="${GOAL}" aria-valuenow="${issue.supporters}" aria-label="${issue.supporters} of ${GOAL} neighbors"><span style="width:${progress}%"></span><i></i></div>`;
+}
+
+function pendingNote(issue) {
+  return issue.pendingSupporters > 0
+    ? `<span class="pending-note" title="Endorsements from new accounts count after a day. It keeps the counts honest.">+${issue.pendingSupporters} pending</span>`
+    : "";
+}
+
+function reviewBadge(issue) {
+  return issue.underReview ? `<span class="badge review" title="Paused while a coordinator checks the endorsements">Under review</span>` : "";
 }
 
 function supportControl(issue, verb = "Back this") {
@@ -193,14 +257,14 @@ function renderIssueList() {
     const thumb = photos.length
       ? `<div class="card-photos">${photoButton(issue, 0, "card-photo")}${photos.length > 1 ? `<span class="more">+${photos.length - 1}</span>` : ""}</button></div>`
       : "";
-    const priority = issue.supporters >= PRIORITY_THRESHOLD ? `<span class="badge priority">Priority</span>` : "";
+    const priority = (issue.supporters >= PRIORITY_THRESHOLD ? `<span class="badge priority">Priority</span>` : "") + reviewBadge(issue);
     return `<article class="issue-card ${issue.id === selectedIssueId ? "selected" : ""}" data-issue="${escapeHtml(issue.id)}" tabindex="0">
       <div class="card-meta"><span class="cat"><i class="cat-dot cat-${escapeHtml(issue.category)}"></i>${escapeHtml(issue.categoryLabel)}</span><span>${escapeHtml(issue.distance)}</span>${priority}</div>
       <h3>${escapeHtml(issue.title)}</h3>
       <p class="desc">${escapeHtml(issue.description)}</p>
       ${thumb}
       <div class="card-foot">
-        <div class="support-meta"><span><strong>${issue.supporters}</strong> of ${GOAL} neighbors</span>${laneHtml(issue)}</div>
+        <div class="support-meta"><span><strong>${issue.supporters}</strong> of ${GOAL} neighbors${pendingNote(issue)}</span>${laneHtml(issue)}</div>
         ${supportControl(issue)}
       </div>
     </article>`;
@@ -273,8 +337,10 @@ function renderTrackerDetail(issue) {
     <p class="detail-desc">${escapeHtml(issue.description)}</p>
     ${gallery}
     <ol class="timeline" aria-label="Progress">${steps}</ol>
+    ${issue.underReview ? `<p class="notice warn">Under review: a coordinator is checking this report's endorsements before it can move forward.</p>` : ""}
     <button class="btn ${issue.isSubscribed ? "btn-ghost" : "btn-primary"} btn-block" type="button" data-subscribe-issue="${escapeHtml(issue.id)}">${issue.isSubscribed ? "Following. Tap to stop" : "Follow updates"}</button>
-    <p class="hint">The review step checks that a report is clear. It doesn't confirm conditions on site.</p>`;
+    <p class="hint">The review step checks that a report is clear. It doesn't confirm conditions on site.</p>
+    <div class="flag-row">${issue.userFlagged ? `<p class="hint">You flagged this report. Thanks for helping keep Sidewalk useful.</p>` : `<button class="text-link small" type="button" data-flag-issue="${escapeHtml(issue.id)}">Flag this report</button>`}</div>`;
 
   const nextStage = nextStageFor(issue);
   const enabled = coordinatorConfigured && Boolean(nextStage);
@@ -282,7 +348,9 @@ function renderTrackerDetail(issue) {
     ? "Status updates are off until the server has an ADMIN_TOKEN."
     : nextStage ? "Only publish a status you've confirmed." : issue.status === "submitted" ? "This report is waiting on its automatic review." : "This report is at its final stage.";
   $("#tracker-new-status").innerHTML = nextStage ? `<option value="${nextStage}">${STAGE_LABELS[nextStage]}</option>` : `<option value="">No next step</option>`;
-  ["#tracker-new-status", "#tracker-admin-token", "#tracker-status-note", "#tracker-update-status"].forEach((sel) => { $(sel).disabled = !enabled; });
+  ["#tracker-new-status", "#tracker-status-note", "#tracker-update-status"].forEach((sel) => { $(sel).disabled = !enabled; });
+  $("#tracker-admin-token").disabled = !coordinatorConfigured;
+  $$("#mod-selected [data-mod-action], #load-mod-queue").forEach((button) => { button.disabled = !coordinatorConfigured; });
 }
 
 function renderHotspots() {
@@ -483,6 +551,7 @@ function setAccountMode(mode, { keepNotice = false } = {}) {
   show("#back-to-login", mode === "forgot" || mode === "reset");
   show("#resend-verification", false);
   show("#guest-note", !signedIn && isAuthForm);
+  prepareTurnstile("account-turnstile", mode === "register" || mode === "forgot");
 
   $$("#account-tabs [data-account-mode]").forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.accountMode === mode)));
   const password = $("#account-password");
@@ -533,6 +602,7 @@ async function refreshState() {
   try {
     const [auth, result] = await Promise.all([api("/api/auth/me"), api("/api/issues")]);
     emailConfigured = Boolean(auth.emailConfigured);
+    turnstileSiteKey = auth.turnstileSiteKey || null;
     coordinatorConfigured = Boolean(result.coordinatorConfigured);
     setActiveUser(auth.user);
     issues = result.issues;
@@ -556,13 +626,16 @@ async function submitAccountForm(event) {
   if (accountMode === "login" && !password) return setAccountError("Enter your password.", "password");
   if ((accountMode === "register" || accountMode === "reset") && password.length < 8) return setAccountError("Use at least 8 characters.", "password");
 
+  const humanToken = turnstileToken("account-turnstile");
+  if (humanToken === "") return setAccountError("Complete the “I’m human” check first.");
+
   setLoading(button, true);
   try {
     if (accountMode === "login") {
       const result = await api("/api/auth/login", { method: "POST", json: { email, password } });
       await afterSignIn(`Signed in as ${result.user.name}.`);
     } else if (accountMode === "register") {
-      const result = await api("/api/auth/register", { method: "POST", json: { name, email, password, emailUpdates: $("#email-updates").checked } });
+      const result = await api("/api/auth/register", { method: "POST", json: { name, email, password, emailUpdates: $("#email-updates").checked, turnstileToken: humanToken } });
       if (result.pendingVerification) {
         setAccountMode("login");
         $("#account-email").value = email;
@@ -572,7 +645,7 @@ async function submitAccountForm(event) {
         await afterSignIn(result.message);
       }
     } else if (accountMode === "forgot") {
-      const result = await api("/api/auth/forgot-password", { method: "POST", json: { email } });
+      const result = await api("/api/auth/forgot-password", { method: "POST", json: { email, turnstileToken: humanToken } });
       const dev = result.devResetUrl ? `<br>Email isn't set up on this server, so here's the link: <a href="${escapeHtml(result.devResetUrl)}">reset password</a>` : "";
       setAccountNotice(`${escapeHtml(result.message)}${dev}`);
     } else if (accountMode === "reset") {
@@ -595,6 +668,7 @@ async function submitAccountForm(event) {
     }
   } finally {
     setLoading(button, false);
+    resetTurnstile("account-turnstile");
   }
 }
 
@@ -627,11 +701,15 @@ async function handleSupport(id, button) {
   try {
     const result = await api(`/api/issues/${encodeURIComponent(id)}/support`, { method: "POST" });
     issue.supporters = result.count;
+    issue.pendingSupporters = result.pendingSupporters;
+    issue.underReview = issue.underReview || result.underReview;
     issue.userSupported = true;
     issue.isSubscribed = true;
     if (result.priorityReached) issue.status = "community_priority";
     renderAll();
-    showToast(result.priorityReached ? `That's ${result.count}. This is now a neighborhood priority.` : `You're in. ${result.count} neighbors are backing this.`);
+    if (result.pending) showToast("Thanks! New accounts' endorsements count after one day. It keeps fake accounts out.");
+    else if (result.underReview) showToast("Thanks! This report is under review, so its count is paused for now.");
+    else showToast(result.priorityReached ? `That's ${result.count}. This is now a neighborhood priority.` : `You're in. ${result.count} neighbors are backing this.`);
     if (result.goalReached) openPetition(issue);
   } catch (error) {
     if (button) setLoading(button, false);
@@ -773,6 +851,8 @@ function openReport(prefill) {
   $("#report-intro").textContent = activeUser.guest
     ? "Anyone can report. Sign in if you want to endorse issues and get updates."
     : `Posting as ${activeUser.name}. You'll follow this report automatically.`;
+  hideDuplicate();
+  prepareTurnstile("report-turnstile", activeUser.guest);
   openDialog("report-modal");
 }
 
@@ -827,6 +907,9 @@ async function submitReport(event) {
   }
   if (photoQueue.some((entry) => entry.status === "processing")) return (errorLabel.textContent = "Photos are still being prepared. Give it a second.");
 
+  const humanToken = turnstileToken("report-turnstile");
+  if (humanToken === "") return (errorLabel.textContent = "Complete the “I’m human” check first, or sign in.");
+
   const location = pendingLocation || { lat: currentArea.lat, lng: currentArea.lng };
   setLoading(button, true);
   try {
@@ -840,8 +923,11 @@ async function submitReport(event) {
         lat: location.lat,
         lng: location.lng,
         photos: photoQueue.map((entry) => entry.dataUrl),
+        turnstileToken: humanToken,
+        confirmNotDuplicate: confirmDuplicate,
       },
     });
+    hideDuplicate();
     issues.unshift(result.issue);
     form.reset();
     photoQueue = [];
@@ -861,11 +947,176 @@ async function submitReport(event) {
     });
     showToast("Posted. Your report is on the map.");
   } catch (error) {
-    errorLabel.textContent = error.message;
+    if (error.status === 409 && error.data?.duplicate) showDuplicate(error.data.duplicate);
+    else errorLabel.textContent = error.message;
+  } finally {
+    confirmDuplicate = false;
+    setLoading(button, false);
+    resetTurnstile("report-turnstile");
+  }
+}
+
+function showDuplicate(existing) {
+  duplicateIssueId = existing.id;
+  if (!issues.some((issue) => issue.id === existing.id)) issues.push(existing);
+  $("#duplicate-text").textContent = `“${existing.title}” was posted ${timeAgo(existing.createdAt)} and has ${existing.supporters} of ${GOAL} neighbors behind it. Backing it adds your voice where it counts.`;
+  $("#duplicate-panel").hidden = false;
+  $("#duplicate-panel").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function hideDuplicate() {
+  duplicateIssueId = null;
+  $("#duplicate-panel").hidden = true;
+}
+
+$("#duplicate-post").addEventListener("click", () => {
+  confirmDuplicate = true;
+  hideDuplicate();
+  $("#report-form").requestSubmit();
+});
+$("#duplicate-back").addEventListener("click", () => {
+  const id = duplicateIssueId;
+  hideDuplicate();
+  closeDialog("report-modal");
+  if (currentPage !== "report") navigateTo("report");
+  requestAnimationFrame(() => {
+    selectIssue(id);
+    handleSupport(id);
+  });
+});
+
+/* ---------- Flagging ---------- */
+function openFlag(id) {
+  if (!requireAccount("Sign in to flag a report. It keeps flags one per person.", () => openFlag(id))) return;
+  flagIssueId = id;
+  $("#flag-form").reset();
+  $("#flag-error").textContent = "";
+  openDialog("flag-modal");
+}
+
+$("#flag-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const reason = new FormData(event.currentTarget).get("reason");
+  if (!reason) return ($("#flag-error").textContent = "Choose what's wrong with this report.");
+  const button = $("#flag-submit");
+  setLoading(button, true);
+  try {
+    const result = await api(`/api/issues/${encodeURIComponent(flagIssueId)}/flag`, { method: "POST", json: { reason } });
+    closeDialog("flag-modal");
+    if (result.hidden) {
+      issues = issues.filter((issue) => issue.id !== flagIssueId);
+      if (currentTrackerIssue === flagIssueId) currentTrackerIssue = null;
+      showToast("Thanks. Several neighbors flagged this, so it's hidden until a coordinator reviews it.");
+    } else {
+      const issue = issues.find((entry) => entry.id === flagIssueId);
+      if (issue) issue.userFlagged = true;
+      showToast("Thanks. A coordinator will take a look.");
+    }
+    renderAll();
+  } catch (error) {
+    $("#flag-error").textContent = error.message;
+  } finally {
+    setLoading(button, false);
+  }
+});
+
+/* ---------- Coordinator moderation ---------- */
+function coordinatorToken() {
+  const token = $("#tracker-admin-token").value.trim();
+  if (!token) showToast("Enter the coordinator token first.");
+  return token;
+}
+
+function modItemHtml(item) {
+  const reporter = item.reporter.guest
+    ? `Guest report${item.reporter.networkBlocked ? " · network blocked" : ""}`
+    : `By ${escapeHtml(item.reporter.name)} (${escapeHtml(item.reporter.email)})${item.reporter.suspended ? " · suspended" : ""}`;
+  const tags = [
+    item.hidden ? `<span class="badge priority">Hidden</span>` : "",
+    item.underReview ? `<span class="badge review">Under review</span>` : "",
+    ...item.flags.map((f) => `<span class="badge">${escapeHtml(f.reason)} × ${f.total}</span>`),
+  ].join("");
+  const why = [item.hiddenReason, item.reviewReason].filter(Boolean).map(escapeHtml).join(". ");
+  const suspended = item.reporter.suspended || item.reporter.networkBlocked;
+  return `<li class="mod-item" data-mod-id="${escapeHtml(item.id)}">
+    <strong>${escapeHtml(item.title)}</strong>
+    <p class="mod-meta">${escapeHtml(item.categoryLabel)} in ${escapeHtml(item.distance)} · ${reporter}</p>
+    ${why ? `<p class="mod-meta">${why}</p>` : ""}
+    <div class="mod-tags">${tags}</div>
+    <div class="button-row tight">
+      ${item.hidden || item.underReview || item.flagTotal ? `<button class="btn btn-ghost btn-small" type="button" data-mod-action="restore">${item.hidden ? "Restore" : "Mark reviewed"}</button>` : ""}
+      ${item.hidden ? "" : `<button class="btn btn-ghost btn-small" type="button" data-mod-action="hide">Hide</button>`}
+      <button class="btn btn-ghost btn-small" type="button" data-mod-action="${suspended ? "unsuspend-reporter" : "suspend-reporter"}" ${suspended ? "" : 'data-confirm="Tap again to suspend"'}>${suspended ? "Lift suspension" : "Suspend reporter"}</button>
+      <button class="btn btn-ghost btn-small danger" type="button" data-mod-action="delete" data-confirm="Tap again to delete">Delete</button>
+    </div>
+  </li>`;
+}
+
+async function loadModerationQueue() {
+  const token = coordinatorToken();
+  if (!token) return;
+  const button = $("#load-mod-queue");
+  setLoading(button, true);
+  try {
+    const result = await api("/api/admin/moderation", { headers: { Authorization: `Bearer ${token}` } });
+    $("#mod-queue").innerHTML = result.items.length
+      ? result.items.map(modItemHtml).join("")
+      : `<li class="mod-item"><p class="mod-meta">Nothing flagged, hidden, or under review. All clear.</p></li>`;
+  } catch (error) {
+    showToast(error.message);
   } finally {
     setLoading(button, false);
   }
 }
+
+// Destructive actions need a second tap within a few seconds instead of a pop-up.
+function needsSecondTap(button) {
+  if (!button.dataset.confirm) return false;
+  if (button.classList.contains("confirming")) return false;
+  const original = button.textContent;
+  button.classList.add("confirming");
+  button.textContent = button.dataset.confirm;
+  setTimeout(() => { button.classList.remove("confirming"); button.textContent = original; }, 4000);
+  return true;
+}
+
+async function runModAction(button, issueId) {
+  const action = button.dataset.modAction;
+  if (!issueId) return showToast("Choose a report first.");
+  const token = coordinatorToken();
+  if (!token || needsSecondTap(button)) return;
+  button.classList.remove("confirming");
+  setLoading(button, true);
+  try {
+    const method = action === "delete" ? "DELETE" : "POST";
+    const path = action === "delete" ? `/api/admin/issues/${encodeURIComponent(issueId)}` : `/api/admin/issues/${encodeURIComponent(issueId)}/${action}`;
+    const result = await api(path, { method, headers: { Authorization: `Bearer ${token}` }, json: method === "POST" ? {} : undefined });
+    const row = $(`.mod-item[data-mod-id="${CSS.escape(issueId)}"]`);
+    if (row) {
+      if (result.deleted) row.remove();
+      else row.outerHTML = modItemHtml(result.item);
+    }
+    showToast({ hide: "Report hidden.", restore: "Report restored and marked reviewed.", delete: "Report deleted.", "suspend-reporter": "Reporter suspended.", "unsuspend-reporter": "Suspension lifted." }[action] || "Done.");
+    if (action === "delete" || action === "hide" || action === "suspend-reporter") {
+      if (currentTrackerIssue === issueId) currentTrackerIssue = null;
+    }
+    await refreshState();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    setLoading(button, false);
+  }
+}
+
+$("#load-mod-queue").addEventListener("click", loadModerationQueue);
+$("#mod-selected").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-mod-action]");
+  if (button) runModAction(button, currentTrackerIssue);
+});
+$("#mod-queue").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-mod-action]");
+  if (button) runModAction(button, button.closest("[data-mod-id]").dataset.modId);
+});
 
 /* ---------- Place search ---------- */
 function placeLabel(result) {
@@ -907,6 +1158,8 @@ document.addEventListener("click", (event) => {
   if (target.closest('[data-action="start-report"]')) return openReport();
   const close = target.closest("[data-close]");
   if (close) return closeDialog(close.dataset.close);
+  const flag = target.closest("[data-flag-issue]");
+  if (flag) return openFlag(flag.dataset.flagIssue);
   const feed = target.closest("[data-open-issue]");
   if (feed) { navigateTo("report"); return requestAnimationFrame(() => selectIssue(feed.dataset.openIssue)); }
   const card = target.closest(".issue-card");

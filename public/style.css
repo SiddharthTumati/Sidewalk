@@ -552,3 +552,25 @@ body[data-page=home] .chat-widget, body[data-page=converter] .chat-widget { disp
 @media (prefers-reduced-motion: reduce) {
 	*, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* ---------- Anti-abuse and moderation ---------- */
+.turnstile-slot { display: flex; justify-content: center; min-height: 65px; margin-top: 12px; }
+.turnstile-slot[hidden] { display: none; }
+.duplicate-card { margin-top: 14px; padding: 14px; border: 1.5px solid var(--cone); border-radius: var(--radius-s); background: var(--cone-soft); }
+.duplicate-card strong { display: block; font-size: 15px; }
+.duplicate-card p { margin-top: 4px; color: var(--ink); font-size: 14px; line-height: 1.45; }
+.pending-note { margin-left: 6px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.badge.review { background: var(--surface-2); color: var(--muted); border: 1px dashed var(--line-strong); }
+.flag-row { display: flex; justify-content: center; margin-top: 6px; }
+.flag-row .hint { margin-top: 6px; }
+.mod-tools { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.mod-head { font-size: 15px; font-weight: 800; }
+.btn.danger { border-color: var(--cone); color: var(--cone); }
+.btn.confirming { border-color: var(--cone); background: var(--cone); color: #fff; }
+#load-mod-queue { margin-top: 12px; }
+.mod-queue { display: grid; gap: 10px; margin-top: 10px; padding: 0; list-style: none; }
+.mod-queue:empty { display: none; }
+.mod-item { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); }
+.mod-item strong { display: block; font-size: 14.5px; }
+.mod-item .mod-meta { margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.mod-item .mod-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }

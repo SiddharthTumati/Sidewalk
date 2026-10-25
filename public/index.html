@@ -207,6 +207,17 @@
 						<label class="field-label" for="tracker-status-note">Note <span class="optional">Optional</span></label>
 						<input id="tracker-status-note" maxlength="240" placeholder="Work order number, or a short update">
 						<button class="btn btn-ghost btn-block" id="tracker-update-status" type="button">Publish status</button>
+						<div class="mod-tools">
+							<h3 class="mod-head">Moderation</h3>
+							<p class="hint">Acts on the report selected above. Deleting can't be undone.</p>
+							<div class="button-row tight" id="mod-selected">
+								<button class="btn btn-ghost btn-small" type="button" data-mod-action="hide">Hide report</button>
+								<button class="btn btn-ghost btn-small" type="button" data-mod-action="suspend-reporter" data-confirm="Tap again to suspend">Suspend reporter</button>
+								<button class="btn btn-ghost btn-small danger" type="button" data-mod-action="delete" data-confirm="Tap again to delete">Delete</button>
+							</div>
+							<button class="btn btn-ghost btn-block" id="load-mod-queue" type="button">Show flagged and hidden reports</button>
+							<ul class="mod-queue" id="mod-queue" aria-live="polite"></ul>
+						</div>
 					</details>
 				</div>
 			</div>
@@ -303,6 +314,15 @@
 					</div>
 				</fieldset>
 
+				<div class="duplicate-card" id="duplicate-panel" hidden>
+					<strong>Already reported right here</strong>
+					<p id="duplicate-text"></p>
+					<div class="button-row tight">
+						<button class="btn btn-primary btn-small" id="duplicate-back" type="button">Back that report instead</button>
+						<button class="btn btn-ghost btn-small" id="duplicate-post" type="button">Mine is different, post it</button>
+					</div>
+				</div>
+				<div class="turnstile-slot" id="report-turnstile" hidden></div>
 				<p class="form-error" id="form-error" role="alert"></p>
 				<button class="btn btn-primary btn-block btn-lg" id="report-submit" type="submit">Post report</button>
 				<p class="hint center">Keep it respectful and specific. Don't include faces or license plates.</p>
@@ -345,6 +365,7 @@
 						<p class="hint" id="password-hint" hidden>At least 8 characters.</p>
 					</div>
 					<label class="check" id="email-updates-field"><input id="email-updates" name="emailUpdates" type="checkbox" checked><span>Email me when issues I back reach a milestone</span></label>
+					<div class="turnstile-slot" id="account-turnstile" hidden></div>
 					<p class="form-error" id="account-error" role="alert"></p>
 					<button class="btn btn-primary btn-block btn-lg" id="account-submit" type="submit">Sign in</button>
 					<button class="btn btn-ghost btn-block" id="resend-verification" type="button" hidden>Send a new verification link</button>
@@ -388,6 +409,29 @@
 		</dialog>
 
 		<!-- Goal reached -->
+		<dialog class="sheet sheet-narrow" id="flag-modal" aria-labelledby="flag-title">
+			<form class="sheet-body" id="flag-form" novalidate>
+				<div class="sheet-head">
+					<h2 id="flag-title">Flag this report</h2>
+					<button class="icon-btn" type="button" data-close="flag-modal" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+				</div>
+				<p class="sheet-intro">Tell a coordinator what's wrong. A report flagged by several neighbors is hidden until someone reviews it.</p>
+				<fieldset class="field">
+					<legend class="field-label">What's the problem?</legend>
+					<div class="choice-group" id="flag-reasons">
+						<label class="choice"><input type="radio" name="reason" value="spam"><span>Spam or ads</span></label>
+						<label class="choice"><input type="radio" name="reason" value="offensive"><span>Offensive</span></label>
+						<label class="choice"><input type="radio" name="reason" value="fake"><span>Not a real problem</span></label>
+						<label class="choice"><input type="radio" name="reason" value="private"><span>Shows people or private info</span></label>
+						<label class="choice"><input type="radio" name="reason" value="duplicate"><span>Duplicate</span></label>
+						<label class="choice"><input type="radio" name="reason" value="other"><span>Something else</span></label>
+					</div>
+				</fieldset>
+				<p class="form-error" id="flag-error" role="alert"></p>
+				<button class="btn btn-primary btn-block" id="flag-submit" type="submit">Send flag</button>
+			</form>
+		</dialog>
+
 		<dialog class="sheet" id="petition-modal" aria-labelledby="petition-title">
 			<div class="sheet-body">
 				<div class="sheet-head">

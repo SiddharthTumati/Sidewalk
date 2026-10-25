@@ -4,12 +4,13 @@
 // ---------- Security headers ----------
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' https://unpkg.com",
+  "script-src 'self' https://unpkg.com https://challenges.cloudflare.com",
   // Leaflet and a few popups set inline style attributes.
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://server.arcgisonline.com https://unpkg.com",
   "connect-src 'self' https://nominatim.openstreetmap.org",
+  "frame-src https://challenges.cloudflare.com",
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
