@@ -20,7 +20,7 @@ app.use('/api', communityRoutes);
 // Keep AI keys on the server; never send them to the browser.
 const ai = createAi();
 app.locals.ai = ai;
-console.log(ai ? `AI assistant: ${ai.provider} (${ai.model})` : 'AI assistant: off (set OPENAI_API_KEY or GEMINI_API_KEY)');
+console.log(ai ? `AI assistant: ${ai.provider} (${ai.model})` : 'AI assistant: off (set GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY)');
 
 app.post('/api/convert', async (req, res) => {
     const { message, location = '' } = req.body || {};
@@ -30,7 +30,7 @@ app.post('/api/convert', async (req, res) => {
     if (typeof location !== 'string' || location.length > 160) {
         return res.status(400).json({ error: 'Location must be 160 characters or fewer.' });
     }
-    if (!ai) return res.status(503).json({ error: 'The AI converter is not configured. Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment.' });
+    if (!ai) return res.status(503).json({ error: 'The AI converter is not configured. Add GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY to the server environment.' });
 
     try {
         const draft = await ai.generateJson({
@@ -68,7 +68,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     if (!ai) {
-        return res.status(503).json({ error: 'The AI assistant is not configured. Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment.' });
+        return res.status(503).json({ error: 'The AI assistant is not configured. Add GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY to the server environment.' });
     }
 
     const priorMessages = Array.isArray(history)
