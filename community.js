@@ -4,6 +4,7 @@ const { promisify } = require('node:util');
 const express = require('express');
 const nodemailer = require('nodemailer');
 const { DatabaseSync } = require('node:sqlite');
+const { limit, takeAiCredit, adminLocked, recordAdminFailure, clearAdminFailures, clientIp, cleanText, inCarolinas } = require('./security');
 
 const router = express.Router();
 const scrypt = promisify(crypto.scrypt);
@@ -310,6 +311,7 @@ async function transitionIssue(issue, status, note) {
 async function reviewIssueWithAi(issueId, ai) {
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
   if (!issue || issue.status !== 'submitted') return;
+  if (takeAiCredit(null)) return; // Site-wide AI cap reached; skip the automatic review.
   try {
     const review = await ai.generateJson({
       system: 'Review a resident report for clarity and civic routing. Do not claim the reported condition is true or verified on site. Never invent laws or safety facts. Return only a concise completeness note and suggested urgency.',
@@ -410,7 +412,7 @@ router.get('/auth/me', (req, res) => {
 
 router.post('/auth/register', rateLimit(8, 60 * 60 * 1000), async (req, res) => {
   const { name, password, emailUpdates } = req.body || {};
-  const cleanName = typeof name === 'string' ? name.trim() : '';
+  const cleanName = cleanText(name);
   const cleanEmail = cleanEmailFrom(req.body?.email);
   if (cleanName.length < 2 || cleanName.length > 60) return res.status(400).json({ error: 'Enter a name between 2 and 60 characters.', field: 'name' });
   if (!validEmail(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.', field: 'email' });
@@ -463,7 +465,7 @@ router.post('/auth/resend-verification', rateLimit(5, 60 * 60 * 1000), async (re
   res.json(generic);
 });
 
-router.get('/auth/verify', (req, res) => {
+router.get('/auth/verify', limit({ name: 'verify', max: 30, windowMs: 60 * 60 * 1000 }), (req, res) => {
   const token = typeof req.query.token === 'string' ? req.query.token : '';
   const user = token ? db.prepare('SELECT id FROM users WHERE verify_token_hash = ? AND verify_expires_at > ?').get(hashToken(token), Date.now()) : null;
   if (!user) return res.redirect('/?verified=expired');
@@ -541,14 +543,14 @@ router.post('/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-router.patch('/auth/preferences', requireVerifiedUser, (req, res) => {
+router.patch('/auth/preferences', requireVerifiedUser, limit({ name: 'prefs', max: 30, windowMs: 60 * 60 * 1000, by: 'ip+user' }), (req, res) => {
   if (typeof req.body?.emailUpdates !== 'boolean') return res.status(400).json({ error: 'Choose whether to receive petition email updates.' });
   if (req.body.emailUpdates && !hasSmtp) return res.status(503).json({ error: 'Email updates cannot be enabled until SMTP is configured.' });
   db.prepare('UPDATE users SET email_updates = ? WHERE id = ?').run(req.body.emailUpdates ? 1 : 0, req.user.id);
   res.json({ emailUpdates: req.body.emailUpdates });
 });
 
-router.get('/email/unsubscribe', (req, res) => {
+router.get('/email/unsubscribe', limit({ name: 'unsubscribe', max: 30, windowMs: 60 * 60 * 1000 }), (req, res) => {
   const token = typeof req.query.token === 'string' ? req.query.token : '';
   if (!token) return res.status(400).send('This unsubscribe link is invalid.');
   const user = db.prepare('SELECT user_id AS id FROM email_unsubscribe_tokens WHERE token_hash = ?').get(hashToken(token));
@@ -583,7 +585,7 @@ router.get('/issues/:id', (req, res) => {
   res.json({ issue: serializeIssue(issue, req.user?.id), priorityThreshold: PRIORITY_THRESHOLD, petitionGoal: GOAL });
 });
 
-router.post('/issues/:id/subscribe', requireVerifiedUser, (req, res) => {
+router.post('/issues/:id/subscribe', requireVerifiedUser, limit({ name: 'follow', max: 60, windowMs: 60 * 60 * 1000, by: 'ip+user' }), (req, res) => {
   const issue = db.prepare('SELECT id FROM issues WHERE id = ?').get(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Issue not found.' });
   db.prepare('INSERT OR IGNORE INTO issue_subscriptions (issue_id, user_id, created_at) VALUES (?, ?, ?)')
@@ -591,15 +593,22 @@ router.post('/issues/:id/subscribe', requireVerifiedUser, (req, res) => {
   res.json({ subscribed: true, emailAlertsEnabled: hasSmtp && Boolean(req.user.email_updates) });
 });
 
-router.delete('/issues/:id/subscribe', requireVerifiedUser, (req, res) => {
+router.delete('/issues/:id/subscribe', requireVerifiedUser, limit({ name: 'follow', max: 60, windowMs: 60 * 60 * 1000, by: 'ip+user' }), (req, res) => {
   db.prepare('DELETE FROM issue_subscriptions WHERE issue_id = ? AND user_id = ?').run(req.params.id, req.user.id);
   res.json({ subscribed: false });
 });
 
 router.patch('/issues/:id/status', async (req, res) => {
   if (!process.env.ADMIN_TOKEN) return res.status(503).json({ error: 'Issue status changes are not configured. Set ADMIN_TOKEN on the server.' });
-  if (!isCoordinator(req)) return res.status(403).json({ error: 'Coordinator token is invalid.' });
-  const { status, note } = req.body || {};
+  if (adminLocked(req)) return res.status(429).json({ error: 'Too many wrong coordinator tokens. Coordinator tools are locked for 15 minutes on this network.' });
+  if (!isCoordinator(req)) {
+    recordAdminFailure(req);
+    console.warn(`Coordinator token rejected from ${clientIp(req)} for issue ${req.params.id}`);
+    return res.status(403).json({ error: 'Coordinator token is invalid.' });
+  }
+  clearAdminFailures(req);
+  const { status } = req.body || {};
+  const note = cleanText(req.body?.note).slice(0, 240);
   if (!ISSUE_STAGES.includes(status) || status === 'submitted') return res.status(400).json({ error: 'Choose a valid next issue status.' });
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Issue not found.' });
@@ -613,6 +622,7 @@ router.patch('/issues/:id/status', async (req, res) => {
     resolved: [],
   }[issue.status || 'submitted'];
   if (!allowedNext?.includes(status)) return res.status(409).json({ error: 'This status is not the next valid lifecycle stage. Priority requires 10 endorsements.' });
+  console.log(`Coordinator moved issue ${issue.id} from ${issue.status || 'submitted'} to ${status} (from ${clientIp(req)})`);
   try {
     const updated = await transitionIssue(issue, status, note);
     res.json({ issue: serializeIssue(db.prepare('SELECT * FROM issues WHERE id = ?').get(updated.id), req.user?.id), emailAlertsEnabled: hasSmtp });
@@ -622,14 +632,21 @@ router.patch('/issues/:id/status', async (req, res) => {
   }
 });
 
-router.post('/issues', async (req, res) => {
-  const { title, category, description, distance, lat, lng, photo } = req.body || {};
+const reportHourly = limit({ name: 'report-hour', max: 6, windowMs: 60 * 60 * 1000, by: 'ip+user', successOnly: true, message: 'You’ve posted several reports in the last hour. Please wait a bit before posting another.' });
+const reportDaily = limit({ name: 'report-day', max: 20, windowMs: 24 * 60 * 60 * 1000, by: 'ip+user', successOnly: true, message: 'You’ve reached today’s limit for new reports. Please try again tomorrow.' });
+
+router.post('/issues', reportHourly, reportDaily, async (req, res) => {
+  const { category, lat, lng, photo } = req.body || {};
+  const title = cleanText(req.body?.title);
+  const description = cleanText(req.body?.description, { multiline: true });
+  const distance = cleanText(req.body?.distance).slice(0, 100);
   const rawPhotos = Array.isArray(req.body?.photos) ? req.body.photos : (photo ? [photo] : []);
   const categories = { safety: 'Street safety', access: 'Accessibility', parks: 'Parks & public space', lighting: 'Street lighting', other: 'Neighborhood issue' };
-  if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 70) return res.status(400).json({ error: 'Issue titles must be 3 to 70 characters.' });
+  if (title.length < 3 || title.length > 70) return res.status(400).json({ error: 'Issue titles must be 3 to 70 characters.' });
   if (!categories[category]) return res.status(400).json({ error: 'Choose a valid issue category.' });
-  if (typeof description !== 'string' || description.trim().length < 5 || description.trim().length > 400) return res.status(400).json({ error: 'Issue descriptions must be 5 to 400 characters.' });
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return res.status(400).json({ error: 'Choose a valid map location.' });
+  if (description.length < 5 || description.length > 400) return res.status(400).json({ error: 'Issue descriptions must be 5 to 400 characters.' });
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: 'Choose a valid map location.' });
+  if (!inCarolinas(lat, lng)) return res.status(400).json({ error: 'Sidewalk covers North and South Carolina. Drop the pin on a spot inside the Carolinas.' });
   if (rawPhotos.length > MAX_PHOTOS) return res.status(400).json({ error: `Attach up to ${MAX_PHOTOS} photos.` });
   let photos;
   try {
@@ -641,7 +658,7 @@ router.post('/issues', async (req, res) => {
   const createdAt = Date.now();
   db.prepare(`INSERT INTO issues (id, title, category, category_label, description, distance, lat, lng, created_by, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, title.trim(), category, categories[category], description.trim(), String(distance || 'The Carolinas').slice(0, 100), lat, lng, req.user?.id || null, createdAt);
+    .run(id, title, category, categories[category], description, distance || 'The Carolinas', lat, lng, req.user?.id || null, createdAt);
   photos.forEach(({ mime, data }, position) => insertPhoto.run(crypto.randomUUID(), id, mime, data, position, createdAt));
   db.prepare('INSERT INTO issue_events (issue_id, status, note, created_at) VALUES (?, ?, ?, ?)')
     .run(id, 'submitted', 'Issue submitted to the community map.', createdAt);
@@ -652,7 +669,7 @@ router.post('/issues', async (req, res) => {
   if (req.app.locals.ai) setImmediate(() => reviewIssueWithAi(id, req.app.locals.ai));
 });
 
-router.post('/issues/:id/support', requireVerifiedUser, async (req, res) => {
+router.post('/issues/:id/support', requireVerifiedUser, limit({ name: 'endorse', max: 30, windowMs: 60 * 60 * 1000, by: 'ip+user', message: 'You’re endorsing reports very quickly. Please wait a bit and try again.' }), async (req, res) => {
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
   if (!issue) return res.status(404).json({ error: 'Issue not found.' });
   try {
@@ -691,5 +708,11 @@ router.post('/issues/:id/support', requireVerifiedUser, async (req, res) => {
   }
   res.json({ count, goalReached, priorityReached });
 });
+
+// Used by server.js for the health check and a clean shutdown.
+router.ping = () => db.prepare('SELECT 1').get();
+router.close = () => {
+  try { if (db.isOpen !== false) db.close(); } catch (error) { /* already closed */ }
+};
 
 module.exports = router;

@@ -377,7 +377,7 @@ function renderSecondaryMaps() {
         radius: selected ? 11 : 8, weight: selected ? 4 : 2, color: selected ? "#23272b" : "#fff",
         fillColor: resolved ? "#2f7a50" : hot ? "#d9532a" : "#f2c230", fillOpacity: 1,
       }).addTo(trackerMap);
-      marker.bindTooltip(issue.title);
+      marker.bindTooltip(escapeHtml(issue.title));
       marker.on("click", () => { currentTrackerIssue = issue.id; renderTracker(); renderSecondaryMaps(); });
       trackerMarkers.set(issue.id, marker);
     });

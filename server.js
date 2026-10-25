@@ -5,16 +5,34 @@ dotenv.config();
 
 const { createAi, describeAiError } = require('./ai');
 const communityRoutes = require('./community');
+const { securityHeaders, limit, aiDailyCap } = require('./security');
 
 const app = express();
+app.disable('x-powered-by');
 // Behind a host like Render or Railway, trust its proxy so rate limits see real client IPs.
 if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : process.env.TRUST_PROXY);
-// Reports can carry up to four compressed photos as base64.
-app.use(express.json({ limit: '14mb' }));
+app.use(securityHeaders);
+
+// Health check for the host: answers only when the app and database are working.
+app.get('/healthz', (req, res) => {
+    try {
+        communityRoutes.ping();
+        res.set('Cache-Control', 'no-store').json({ ok: true });
+    } catch (error) {
+        res.status(503).json({ ok: false });
+    }
+});
+
+// Only new reports carry photos (up to four, compressed, as base64); everything else stays small.
+const reportJson = express.json({ limit: '14mb' });
+const smallJson = express.json({ limit: '64kb' });
+app.use((req, res, next) => (req.method === 'POST' && req.path === '/api/issues' ? reportJson : smallJson)(req, res, next));
 
 // Serves all files inside your public folder (index.html, style.css, app.js)
 app.use(express.static('public'));
 app.use('/vendor/leaflet-heat', express.static(path.join(__dirname, 'node_modules', 'leaflet.heat', 'dist')));
+// A broad per-IP ceiling on all API traffic; individual routes have tighter limits.
+app.use('/api', limit({ name: 'api', max: 600, windowMs: 5 * 60 * 1000, message: 'Too many requests from your network. Please slow down and try again in a few minutes.' }));
 app.use('/api', communityRoutes);
 
 // Keep AI keys on the server; never send them to the browser.
@@ -22,7 +40,9 @@ const ai = createAi();
 app.locals.ai = ai;
 console.log(ai ? `AI assistant: ${ai.provider} (${ai.model})` : 'AI assistant: off (set GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY)');
 
-app.post('/api/convert', async (req, res) => {
+const aiBurst = (name, max) => limit({ name, max, windowMs: 10 * 60 * 1000, message: 'You’re sending messages quickly. Please wait a few minutes and try again.' });
+
+app.post('/api/convert', aiBurst('convert', 10), aiDailyCap, async (req, res) => {
     const { message, location = '' } = req.body || {};
     if (typeof message !== 'string' || message.trim().length < 10 || message.length > 2000) {
         return res.status(400).json({ error: 'Describe the issue in 10 to 2,000 characters.' });
@@ -60,7 +80,7 @@ app.post('/api/convert', async (req, res) => {
 });
 
 // API endpoint for the civic assistant.
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', aiBurst('chat', 20), aiDailyCap, async (req, res) => {
     const { message, history } = req.body || {};
 
     if (typeof message !== 'string' || !message.trim() || message.length > 2000) {
@@ -95,13 +115,38 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
+
 app.use((error, req, res, next) => {
     if (error.type === 'entity.too.large') return res.status(413).json({ error: 'Request is too large.' });
     if (error instanceof SyntaxError && error.status === 400 && 'body' in error) return res.status(400).json({ error: 'Request must contain valid JSON.' });
-    next(error);
+    console.error(`Unhandled error on ${req.method} ${req.path}:`, error);
+    if (res.headersSent) return next(error);
+    res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Server is running! Open your browser and go to: http://localhost:${PORT}`);
 });
+
+// Hosts send SIGTERM when replacing the app with a new version. Finish in-flight requests,
+// close the database cleanly, then exit, instead of being cut off mid-write.
+let shuttingDown = false;
+function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal} received: finishing open requests and shutting down.`);
+    server.close(() => {
+        communityRoutes.close();
+        console.log('Shut down cleanly.');
+        process.exit(0);
+    });
+    server.closeIdleConnections?.();
+    setTimeout(() => {
+        communityRoutes.close();
+        process.exit(0);
+    }, 8000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
