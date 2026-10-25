@@ -74,6 +74,15 @@ db.exec(`
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS issue_photos (
+    id TEXT PRIMARY KEY,
+    issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    mime TEXT NOT NULL,
+    data BLOB NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS issue_photos_issue_idx ON issue_photos(issue_id, position);
   CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expires_at);
   CREATE INDEX IF NOT EXISTS supports_issue_idx ON supports(issue_id);
   CREATE INDEX IF NOT EXISTS issue_events_issue_idx ON issue_events(issue_id, created_at);
@@ -81,6 +90,8 @@ db.exec(`
 
 const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map((column) => column.name));
 if (!userColumns.has('email_unsubscribe_hash')) db.exec('ALTER TABLE users ADD COLUMN email_unsubscribe_hash TEXT');
+if (!userColumns.has('reset_token_hash')) db.exec('ALTER TABLE users ADD COLUMN reset_token_hash TEXT');
+if (!userColumns.has('reset_expires_at')) db.exec('ALTER TABLE users ADD COLUMN reset_expires_at INTEGER');
 const issueColumns = new Set(db.prepare('PRAGMA table_info(issues)').all().map((column) => column.name));
 if (!issueColumns.has('status')) db.exec("ALTER TABLE issues ADD COLUMN status TEXT NOT NULL DEFAULT 'submitted'");
 if (!issueColumns.has('status_updated_at')) db.exec('ALTER TABLE issues ADD COLUMN status_updated_at INTEGER');
@@ -116,6 +127,40 @@ db.exec(`INSERT INTO issue_events (issue_id, status, note, created_at)
   SELECT issues.id, 'submitted', 'Issue added to the community map.', issues.created_at
   FROM issues
   WHERE NOT EXISTS (SELECT 1 FROM issue_events WHERE issue_events.issue_id = issues.id)`);
+
+const MAX_PHOTOS = 4;
+const MAX_PHOTO_BYTES = 2.5 * 1024 * 1024;
+const PHOTO_SIGNATURES = {
+  'image/jpeg': (buf) => buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff,
+  'image/png': (buf) => buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/webp': (buf) => buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP',
+};
+
+// Turns a data URL into a checked image buffer, or throws a message the user can act on.
+function decodePhoto(dataUrl) {
+  const match = typeof dataUrl === 'string' && dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('Photos must be JPEG, PNG, or WebP images.');
+  const [, mime, base64] = match;
+  if (base64.length > Math.ceil(MAX_PHOTO_BYTES / 3) * 4 + 4) throw new Error('Each photo must be smaller than 2.5 MB.');
+  const data = Buffer.from(base64, 'base64');
+  if (!data.length || data.length > MAX_PHOTO_BYTES) throw new Error('Each photo must be smaller than 2.5 MB.');
+  if (!PHOTO_SIGNATURES[mime](data)) throw new Error('One of the photos is not a valid image file.');
+  return { mime, data };
+}
+
+const insertPhoto = db.prepare('INSERT INTO issue_photos (id, issue_id, mime, data, position, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+
+// Older databases kept a single photo as a data URL on the issue row; move it into issue_photos.
+for (const row of db.prepare(`SELECT id, photo_data, created_at FROM issues
+  WHERE photo_data IS NOT NULL AND NOT EXISTS (SELECT 1 FROM issue_photos WHERE issue_photos.issue_id = issues.id)`).all()) {
+  try {
+    const { mime, data } = decodePhoto(row.photo_data);
+    insertPhoto.run(crypto.randomUUID(), row.id, mime, data, 0, row.created_at);
+    db.prepare('UPDATE issues SET photo_data = NULL WHERE id = ?').run(row.id);
+  } catch (error) {
+    console.error(`Skipped legacy photo for issue ${row.id}:`, error.message);
+  }
+}
 
 const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
 const authAttempts = new Map();
@@ -224,7 +269,8 @@ async function sendIssueStatusEmails(issue, status, note) {
   const appUrl = (process.env.APP_URL || `http://localhost:${process.env.PORT || 3001}`).replace(/\/$/, '');
   await Promise.allSettled(recipients.map(async ({ id, email }) => {
     const unsubscribeToken = crypto.randomBytes(32).toString('hex');
-    db.prepare('UPDATE users SET email_unsubscribe_hash = ? WHERE id = ?').run(hashToken(unsubscribeToken), id);
+    db.prepare('INSERT INTO email_unsubscribe_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)')
+      .run(hashToken(unsubscribeToken), id, Date.now());
     await sendEmail({
       to: email,
       subject: `Sidewalk issue update: ${issue.title}`,
@@ -292,7 +338,9 @@ function serializeIssue(row, userId) {
     distance: row.distance,
     lat: row.lat,
     lng: row.lng,
-    photo: row.photo_data,
+    photos: db.prepare('SELECT id FROM issue_photos WHERE issue_id = ? ORDER BY position ASC, created_at ASC').all(row.id)
+      .map((photo) => `/api/photos/${photo.id}`),
+    createdAt: row.created_at,
     userSupported,
     isSubscribed,
     status: row.status || 'submitted',
@@ -306,65 +354,106 @@ router.use((req, res, next) => {
   next();
 });
 
+const MIN_PASSWORD = 8;
+const VERIFY_TTL = 24 * 60 * 60 * 1000;
+const RESET_TTL = 60 * 60 * 1000;
+// Used so a login for an unknown email takes as long as a real password check.
+const DUMMY_HASH = `${'0'.repeat(32)}:${'0'.repeat(128)}`;
+
+function appUrl() {
+  return (process.env.APP_URL || `http://localhost:${process.env.PORT || 3001}`).replace(/\/$/, '');
+}
+
+function publicUser(user) {
+  return { id: user.id, name: user.name, email: user.email, emailUpdates: Boolean(user.email_updates) };
+}
+
+function cleanEmailFrom(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function validEmail(email) {
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function validPassword(password) {
+  return typeof password === 'string' && password.length >= MIN_PASSWORD && password.length <= 200;
+}
+
+async function sendVerificationEmail(user) {
+  const token = crypto.randomBytes(32).toString('hex');
+  db.prepare('UPDATE users SET verify_token_hash = ?, verify_expires_at = ? WHERE id = ?')
+    .run(hashToken(token), Date.now() + VERIFY_TTL, user.id);
+  await sendEmail({
+    to: user.email,
+    subject: 'Verify your Sidewalk account',
+    text: `Hi ${user.name},\n\nConfirm your email to finish setting up Sidewalk (this link works for 24 hours):\n${appUrl()}/api/auth/verify?token=${token}\n\nIf you didn't create this account, you can ignore this email.`,
+  });
+}
+
 router.get('/auth/me', (req, res) => {
-  if (!req.user) return res.json({ user: null, emailConfigured: hasSmtp });
-  res.json({ user: { id: req.user.id, name: req.user.name, email: req.user.email, emailUpdates: Boolean(req.user.email_updates) }, emailConfigured: hasSmtp });
+  res.json({ user: req.user ? publicUser(req.user) : null, emailConfigured: hasSmtp });
 });
 
-router.post('/auth/register', rateLimit(5, 60 * 60 * 1000), async (req, res) => {
-  const { name, email, password, emailUpdates } = req.body || {};
+router.post('/auth/register', rateLimit(8, 60 * 60 * 1000), async (req, res) => {
+  const { name, password, emailUpdates } = req.body || {};
   const cleanName = typeof name === 'string' ? name.trim() : '';
-  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
-  if (cleanName.length < 2 || cleanName.length > 60) return res.status(400).json({ error: 'Enter a name between 2 and 60 characters.' });
-  if (cleanEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
-  if (typeof password !== 'string' || password.length < 12 || password.length > 200) return res.status(400).json({ error: 'Use a password between 12 and 200 characters.' });
-  if (!mailer && process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'Email is not configured yet. Add SMTP settings to .env before creating accounts.' });
+  const cleanEmail = cleanEmailFrom(req.body?.email);
+  if (cleanName.length < 2 || cleanName.length > 60) return res.status(400).json({ error: 'Enter a name between 2 and 60 characters.', field: 'name' });
+  if (!validEmail(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.', field: 'email' });
+  if (!validPassword(password)) return res.status(400).json({ error: `Use a password with at least ${MIN_PASSWORD} characters.`, field: 'password' });
+  if (!mailer && process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'Sign-up is paused until email is configured on the server.' });
 
-  const id = crypto.randomUUID();
-  const token = mailer ? crypto.randomBytes(32).toString('hex') : null;
-  const tokenHash = token ? hashToken(token) : null;
-  const expires = Date.now() + 24 * 60 * 60 * 1000;
-  try {
-    const passwordHash = await hashPassword(password);
-    db.prepare(`INSERT INTO users (id, name, email, password_hash, verify_token_hash, verify_expires_at, email_updates, email_unsubscribe_hash, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, cleanName, cleanEmail, passwordHash, tokenHash, token ? expires : null, hasSmtp && emailUpdates !== false ? 1 : 0, null, Date.now());
-  } catch (error) {
-    if (String(error.message).includes('UNIQUE constraint failed')) return res.status(409).json({ error: 'An account already uses this email address.' });
-    console.error('Could not create account:', error.message);
-    return res.status(500).json({ error: 'Could not create your account. Please try again.' });
+  const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+  if (existing?.verified_at) return res.status(409).json({ error: 'An account already uses this email. Sign in instead, or reset your password.', field: 'email', suggest: 'login' });
+
+  const passwordHash = await hashPassword(password);
+  const wantsUpdates = hasSmtp && emailUpdates !== false ? 1 : 0;
+  let user;
+  if (existing) {
+    // Someone signed up but never verified: let them try again instead of locking the email forever.
+    db.prepare('UPDATE users SET name = ?, password_hash = ?, email_updates = ? WHERE id = ?').run(cleanName, passwordHash, wantsUpdates, existing.id);
+    user = { ...existing, name: cleanName, email_updates: wantsUpdates };
+  } else {
+    const id = crypto.randomUUID();
+    db.prepare(`INSERT INTO users (id, name, email, password_hash, email_updates, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(id, cleanName, cleanEmail, passwordHash, wantsUpdates, Date.now());
+    user = { id, name: cleanName, email: cleanEmail, email_updates: wantsUpdates };
   }
 
   if (mailer) {
-    const appUrl = (process.env.APP_URL || `http://localhost:${process.env.PORT || 3001}`).replace(/\/$/, '');
-    const verificationUrl = `${appUrl}/api/auth/verify?token=${token}`;
     try {
-      await sendEmail({
-        to: cleanEmail,
-        subject: 'Verify your Sidewalk account',
-        text: `Hi ${cleanName},\n\nVerify your Sidewalk account using this link (valid for 24 hours):\n${verificationUrl}\n\nIf you did not create this account, you can ignore this email.`,
-      });
+      await sendVerificationEmail(user);
     } catch (error) {
-      db.prepare('DELETE FROM users WHERE id = ?').run(id);
       console.error('Verification email failed:', error.message);
-      return res.status(502).json({ error: 'Could not send the verification email. Check the SMTP settings and try again.' });
+      if (!existing) db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+      return res.status(502).json({ error: 'We couldn’t send the verification email. Check the address and try again.' });
     }
-    return res.status(201).json({ message: 'Check your inbox for a verification link. It is valid for 24 hours.', emailConfigured: true });
+    return res.status(201).json({ pendingVerification: true, email: cleanEmail, message: `We sent a verification link to ${cleanEmail}. Open it to finish signing up.`, emailConfigured: true });
   }
-  const verifiedAt = Date.now();
-  db.prepare('UPDATE users SET verified_at = ? WHERE id = ?').run(verifiedAt, id);
-  setSession(res, id);
-  res.status(201).json({
-    message: 'Account created and signed in for local testing. SMTP is not configured, so no email was sent and email updates are disabled.',
-    user: { id, name: cleanName, email: cleanEmail, emailUpdates: false },
-    emailConfigured: false,
-  });
+
+  // Local development without SMTP: verify immediately so the app is usable.
+  db.prepare('UPDATE users SET verified_at = ?, verify_token_hash = NULL, verify_expires_at = NULL WHERE id = ?').run(Date.now(), user.id);
+  setSession(res, user.id);
+  res.status(201).json({ user: publicUser({ ...user, email_updates: 0 }), message: `Welcome, ${cleanName}. You're signed in.`, emailConfigured: false });
+});
+
+router.post('/auth/resend-verification', rateLimit(5, 60 * 60 * 1000), async (req, res) => {
+  const email = cleanEmailFrom(req.body?.email);
+  const generic = { message: 'If that account is waiting for verification, a new link is on its way.' };
+  if (!validEmail(email)) return res.status(400).json({ error: 'Enter a valid email address.', field: 'email' });
+  if (!mailer) return res.status(503).json({ error: 'Email isn’t configured on this server, so links can’t be sent.' });
+  const user = db.prepare('SELECT * FROM users WHERE email = ? AND verified_at IS NULL').get(email);
+  if (user) {
+    try { await sendVerificationEmail(user); } catch (error) { console.error('Resend verification failed:', error.message); }
+  }
+  res.json(generic);
 });
 
 router.get('/auth/verify', (req, res) => {
   const token = typeof req.query.token === 'string' ? req.query.token : '';
   const user = token ? db.prepare('SELECT id FROM users WHERE verify_token_hash = ? AND verify_expires_at > ?').get(hashToken(token), Date.now()) : null;
-  if (!user) return res.status(400).send('This verification link is invalid or expired. Please create your account again.');
+  if (!user) return res.redirect('/?verified=expired');
   db.prepare('UPDATE users SET verified_at = ?, verify_token_hash = NULL, verify_expires_at = NULL WHERE id = ?').run(Date.now(), user.id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
   setSession(res, user.id);
@@ -372,22 +461,66 @@ router.get('/auth/verify', (req, res) => {
 });
 
 router.post('/auth/login', rateLimit(10, 15 * 60 * 1000), async (req, res) => {
-  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const email = cleanEmailFrom(req.body?.email);
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  const user = db.prepare('SELECT id, name, email, password_hash, verified_at, email_updates FROM users WHERE email = ?').get(email);
-  if (!user || !(await verifyPassword(password, user.password_hash))) return res.status(401).json({ error: 'Email or password is incorrect.' });
+  if (!email || !password) return res.status(400).json({ error: 'Enter your email and password.' });
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const passwordOk = await verifyPassword(password, user?.password_hash || DUMMY_HASH);
+  if (!user || !passwordOk) return res.status(401).json({ error: 'That email and password don’t match. Check them, or reset your password.' });
   if (!user.verified_at) {
     if (!mailer && process.env.NODE_ENV !== 'production') {
-      const verifiedAt = Date.now();
-      db.prepare('UPDATE users SET verified_at = ?, verify_token_hash = NULL, verify_expires_at = NULL WHERE id = ?').run(verifiedAt, user.id);
-      user.verified_at = verifiedAt;
+      db.prepare('UPDATE users SET verified_at = ?, verify_token_hash = NULL, verify_expires_at = NULL, email_updates = 0 WHERE id = ?').run(Date.now(), user.id);
       user.email_updates = 0;
     } else {
-      return res.status(403).json({ error: 'Verify your email before signing in. Check your inbox for the verification link.' });
+      return res.status(403).json({ error: 'Confirm your email first. Open the verification link we sent, or send a new one.', needsVerification: true, email: user.email });
     }
   }
   setSession(res, user.id);
-  res.json({ user: { id: user.id, name: user.name, email: user.email, emailUpdates: Boolean(user.email_updates) }, emailConfigured: hasSmtp });
+  res.json({ user: publicUser(user), emailConfigured: hasSmtp });
+});
+
+router.post('/auth/forgot-password', rateLimit(5, 60 * 60 * 1000), async (req, res) => {
+  const email = cleanEmailFrom(req.body?.email);
+  if (!validEmail(email)) return res.status(400).json({ error: 'Enter a valid email address.', field: 'email' });
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const response = { message: `If an account uses ${email}, a reset link is on its way. It works for one hour.` };
+  if (user) {
+    const token = crypto.randomBytes(32).toString('hex');
+    db.prepare('UPDATE users SET reset_token_hash = ?, reset_expires_at = ? WHERE id = ?').run(hashToken(token), Date.now() + RESET_TTL, user.id);
+    const resetUrl = `${appUrl()}/?reset=${token}`;
+    if (mailer) {
+      try {
+        await sendEmail({
+          to: user.email,
+          subject: 'Reset your Sidewalk password',
+          text: `Hi ${user.name},\n\nUse this link to choose a new password (it works for one hour):\n${resetUrl}\n\nIf you didn't ask for this, you can ignore this email; your password hasn't changed.`,
+        });
+      } catch (error) {
+        console.error('Reset email failed:', error.message);
+      }
+    } else if (process.env.NODE_ENV !== 'production') {
+      // No SMTP in local development: hand the link back so the flow can still be tested.
+      console.log(`Password reset link for ${user.email}: ${resetUrl}`);
+      response.devResetUrl = resetUrl;
+    }
+  }
+  if (!mailer && process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'Password reset needs email, which isn’t configured on this server.' });
+  res.json(response);
+});
+
+router.post('/auth/reset-password', rateLimit(10, 60 * 60 * 1000), async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const password = req.body?.password;
+  if (!validPassword(password)) return res.status(400).json({ error: `Use a password with at least ${MIN_PASSWORD} characters.`, field: 'password' });
+  const user = token ? db.prepare('SELECT * FROM users WHERE reset_token_hash = ? AND reset_expires_at > ?').get(hashToken(token), Date.now()) : null;
+  if (!user) return res.status(400).json({ error: 'This reset link has expired or was already used. Request a new one.' });
+  const passwordHash = await hashPassword(password);
+  // Following a reset link proves the person controls the inbox, so it also verifies the account.
+  db.prepare('UPDATE users SET password_hash = ?, reset_token_hash = NULL, reset_expires_at = NULL, verified_at = COALESCE(verified_at, ?), verify_token_hash = NULL WHERE id = ?')
+    .run(passwordHash, Date.now(), user.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  setSession(res, user.id);
+  res.json({ user: publicUser(user), message: 'Password updated. You’re signed in.', emailConfigured: hasSmtp });
 });
 
 router.post('/auth/logout', (req, res) => {
@@ -420,6 +553,15 @@ router.get('/issues', (req, res) => {
     petitionGoal: GOAL,
     coordinatorConfigured: Boolean(process.env.ADMIN_TOKEN),
   });
+});
+
+router.get('/photos/:id', (req, res) => {
+  const photo = db.prepare('SELECT mime, data FROM issue_photos WHERE id = ?').get(req.params.id);
+  if (!photo) return res.status(404).json({ error: 'Photo not found.' });
+  res.setHeader('Content-Type', photo.mime);
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.send(Buffer.from(photo.data));
 });
 
 router.get('/issues/:id', (req, res) => {
@@ -469,18 +611,25 @@ router.patch('/issues/:id/status', async (req, res) => {
 
 router.post('/issues', async (req, res) => {
   const { title, category, description, distance, lat, lng, photo } = req.body || {};
+  const rawPhotos = Array.isArray(req.body?.photos) ? req.body.photos : (photo ? [photo] : []);
   const categories = { safety: 'Street safety', access: 'Accessibility', parks: 'Parks & public space', lighting: 'Street lighting', other: 'Neighborhood issue' };
   if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 70) return res.status(400).json({ error: 'Issue titles must be 3 to 70 characters.' });
   if (!categories[category]) return res.status(400).json({ error: 'Choose a valid issue category.' });
   if (typeof description !== 'string' || description.trim().length < 5 || description.trim().length > 400) return res.status(400).json({ error: 'Issue descriptions must be 5 to 400 characters.' });
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return res.status(400).json({ error: 'Choose a valid map location.' });
-  if (typeof photo === 'string' && photo.length > 2_000_000) return res.status(413).json({ error: 'Choose a photo smaller than 1.5 MB.' });
-  if (photo && (typeof photo !== 'string' || !/^data:image\/(png|jpeg|webp);base64,/.test(photo))) return res.status(400).json({ error: 'Photos must be PNG, JPEG, or WebP images.' });
+  if (rawPhotos.length > MAX_PHOTOS) return res.status(400).json({ error: `Attach up to ${MAX_PHOTOS} photos.` });
+  let photos;
+  try {
+    photos = rawPhotos.map(decodePhoto);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
   const id = crypto.randomUUID();
   const createdAt = Date.now();
-  db.prepare(`INSERT INTO issues (id, title, category, category_label, description, distance, lat, lng, photo_data, created_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, title.trim(), category, categories[category], description.trim(), String(distance || 'The Carolinas').slice(0, 100), lat, lng, photo || null, req.user?.id || null, createdAt);
+  db.prepare(`INSERT INTO issues (id, title, category, category_label, description, distance, lat, lng, created_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, title.trim(), category, categories[category], description.trim(), String(distance || 'The Carolinas').slice(0, 100), lat, lng, req.user?.id || null, createdAt);
+  photos.forEach(({ mime, data }, position) => insertPhoto.run(crypto.randomUUID(), id, mime, data, position, createdAt));
   db.prepare('INSERT INTO issue_events (issue_id, status, note, created_at) VALUES (?, ?, ?, ?)')
     .run(id, 'submitted', 'Issue submitted to the community map.', createdAt);
   if (req.user) db.prepare('INSERT INTO supports (issue_id, user_id, created_at) VALUES (?, ?, ?)').run(id, req.user.id, Date.now());

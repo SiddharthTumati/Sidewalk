@@ -7,7 +7,10 @@ const { GoogleGenAI, Type } = require('@google/genai');
 const communityRoutes = require('./community');
 
 const app = express();
-app.use(express.json({ limit: '3mb' }));
+// Behind a host like Render or Railway, trust its proxy so rate limits see real client IPs.
+if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : process.env.TRUST_PROXY);
+// Reports can carry up to four compressed photos as base64.
+app.use(express.json({ limit: '14mb' }));
 
 // Serves all files inside your public folder (index.html, style.css, app.js)
 app.use(express.static('public'));

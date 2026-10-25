@@ -2,13 +2,16 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<meta name="theme-color" content="#0b0d0c">
-		<meta name="description" content="Spot a neighborhood issue. Build local support. Get it in front of the people who can fix it.">
-		<title>Sidewalk — Community Civic Tools</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+		<meta name="theme-color" content="#23272b">
+		<meta name="description" content="Spot a neighborhood issue, rally local support, and follow it until it's fixed.">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+		<title>Sidewalk — fix what's broken on your block</title>
+		<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2323272b'/%3E%3Cpath d='M8 9h4v14H8zM14 9h4v14h-4zM20 9h4v14h-4z' fill='%23f2c230'/%3E%3C/svg%3E">
 		<link rel="preconnect" href="https://fonts.googleapis.com">
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-		<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+		<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..900&family=Public+Sans:ital,wght@0,400..700;1,400&display=swap" rel="stylesheet">
 		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 		<link rel="stylesheet" href="style.css">
 		<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
@@ -16,243 +19,419 @@
 		<script src="app.js" defer></script>
 	</head>
 	<body>
+		<svg width="0" height="0" class="sr-only" aria-hidden="true">
+			<symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4 3 6.5v13L9 17l6 2.5 6-2.5V4l-6 2.5L9 4Zm0 0v13m6-10.5v13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+			<symbol id="i-track" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="6" cy="18" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 8.5v7M11 6h10M11 18h10M11 12h7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+			<symbol id="i-hand" viewBox="0 0 24 24"><path d="M7 11V6.5a1.5 1.5 0 0 1 3 0V11m0-1V4.5a1.5 1.5 0 0 1 3 0V10m0 0V5.5a1.5 1.5 0 0 1 3 0V12m0-2.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1.5a6 6 0 0 1-5-2.7L4 14.5a1.6 1.6 0 0 1 2.6-1.8L7 13.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+			<symbol id="i-heat" viewBox="0 0 24 24"><path d="M12 21c4 0 7-2.7 7-6.6 0-3.3-2.2-5.4-3.6-7.4-.6 1.8-1.6 2.8-2.7 3.2C13 6.9 11.4 4.4 9.2 3c.3 3.1-1.4 5-2.6 6.6A8 8 0 0 0 5 14.4C5 18.3 8 21 12 21Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+			<symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+			<symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.3" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+			<symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+			<symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 4 9 4.5-9 4.5-9-4.5L12 4Zm-9 8 9 4.5 9-4.5M3 15.5 12 20l9-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+			<symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2.5h7L17 8h3v11H4V8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+			<symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+			<symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+			<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+			<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+			<symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+			<symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+			<symbol id="i-chev-l" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+			<symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+			<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+		</svg>
+
+		<a class="skip-link" href="#main">Skip to content</a>
+
 		<header class="topbar">
 			<a class="brand" href="#home" data-page-target="home" aria-label="Sidewalk home">
-				<span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
-				<span>sidewalk<span class="brand-period">.</span></span>
+				<span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+				<span class="brand-word">sidewalk</span>
 			</a>
-			<nav class="page-nav" aria-label="Main navigation">
-				<button class="nav-link active" type="button" data-page-target="home">Home</button>
-				<button class="nav-link" type="button" data-page-target="report">Report issues</button>
-				<button class="nav-link" type="button" data-page-target="tracker">Issue tracker</button>
-				<button class="nav-link" type="button" data-page-target="petitions">Petitions</button>
-				<button class="nav-link" type="button" data-page-target="heatmap">Heatmap</button>
-				<button class="nav-link" type="button" data-page-target="converter">Sideassist</button>
+			<nav class="page-nav" aria-label="Main">
+				<button class="nav-link" type="button" data-page-target="report"><svg><use href="#i-map"/></svg><span>Map</span></button>
+				<button class="nav-link" type="button" data-page-target="tracker"><svg><use href="#i-track"/></svg><span>Tracker</span></button>
+				<button class="nav-link" type="button" data-page-target="petitions"><svg><use href="#i-hand"/></svg><span>Petitions</span></button>
+				<button class="nav-link" type="button" data-page-target="heatmap"><svg><use href="#i-heat"/></svg><span>Heatmap</span></button>
+				<button class="nav-link" type="button" data-page-target="converter"><svg><use href="#i-spark"/></svg><span>Sideassist</span></button>
 			</nav>
 			<div class="topbar-right">
-				<button class="area-button" id="area-button" type="button" aria-label="Search neighborhoods"><span class="area-pin">⌖</span><span id="selected-area-label">The Carolinas</span><span class="chevron">⌄</span></button>
-				<button class="avatar" id="profile-button" type="button" aria-label="Sign in or switch account">JD</button>
+				<button class="area-button" id="area-button" type="button" aria-label="Change area">
+					<svg aria-hidden="true"><use href="#i-pin"/></svg><span id="selected-area-label">The Carolinas</span>
+				</button>
+				<button class="avatar" id="profile-button" type="button" aria-label="Sign in or create an account"><span id="profile-initials">Sign in</span></button>
 			</div>
 		</header>
+		<div class="curb" aria-hidden="true"></div>
 
+		<div id="main">
 		<section class="page-view home-page" id="home-page" data-page-section="home">
-			<div class="home-shell">
-				<div class="eyebrow"><span class="eyebrow-line"></span> LOCAL ACTION, IN MOTION</div>
-				<h1>Make your community<br><span>hard to ignore.</span></h1>
-				<p class="home-intro">Report what needs fixing, make sense of city processes, and keep track of what happens next.</p>
-				<div class="home-tools" aria-label="Sidewalk tools">
-					<button class="home-tool" type="button" data-page-target="report"><span class="home-tool-number">01</span><span><strong>Report issues</strong><small>Pin an issue and bring it to your community.</small></span><span class="home-tool-arrow">↗</span></button>
-					<button class="home-tool" type="button" data-page-target="tracker"><span class="home-tool-number">02</span><span><strong>Issue tracker</strong><small>See the current stage and follow progress.</small></span><span class="home-tool-arrow">↗</span></button>
-					<button class="home-tool" type="button" data-page-target="petitions"><span class="home-tool-number">03</span><span><strong>Petitions</strong><small>Find issues nearing a neighborhood tipping point.</small></span><span class="home-tool-arrow">↗</span></button>
-					<button class="home-tool" type="button" data-page-target="heatmap"><span class="home-tool-number">04</span><span><strong>Heatmap</strong><small>Explore where reports and support are gathering.</small></span><span class="home-tool-arrow">↗</span></button>
-					<button class="home-tool" type="button" data-page-target="converter"><span class="home-tool-number">05</span><span><strong>Sideassist</strong><small>Turn a rough note into a clear public works request.</small></span><span class="home-tool-arrow">↗</span></button>
+			<div class="home-hero">
+				<div class="home-copy">
+					<h1 class="display">What's broken on your&nbsp;block?</h1>
+					<p class="home-intro">Pin a pothole, a dark streetlight, or a missing curb ramp. Neighbors back it, Sidewalk tracks it, and the people who can fix it get a clear request.</p>
+					<div class="home-actions">
+						<button class="btn btn-primary btn-lg" type="button" data-action="start-report"><svg aria-hidden="true"><use href="#i-camera"/></svg>Report an issue</button>
+						<button class="btn btn-ghost btn-lg" type="button" data-page-target="report">Browse the map</button>
+					</div>
+					<dl class="home-stats">
+						<div><dt>Reports on the map</dt><dd id="home-issue-count">0</dd></div>
+						<div><dt>Neighbor endorsements</dt><dd id="home-support-count">0</dd></div>
+						<div><dt>Marked high priority</dt><dd id="home-priority-count">0</dd></div>
+					</dl>
 				</div>
-				<div class="home-statline"><span class="live-dot"></span><span><strong id="home-issue-count">0</strong> community reports on the map</span></div>
+				<aside class="home-feed" aria-labelledby="feed-title">
+					<h2 id="feed-title">Latest reports</h2>
+					<div class="feed-list" id="home-feed"></div>
+					<button class="text-link" type="button" data-page-target="report">See every report on the map</button>
+				</aside>
+			</div>
+			<div class="home-how">
+				<h2 class="how-title">How a report moves</h2>
+				<ol class="how-steps">
+					<li><strong>Pin it</strong><span>Drop a pin, add a photo, say what's wrong. Guests can report too.</span></li>
+					<li><strong>Rally neighbors</strong><span>Ten endorsements flags it as a priority. Fifty makes it council-ready.</span></li>
+					<li><strong>Send a clear request</strong><span>Sideassist turns your notes into a formal public works email.</span></li>
+					<li><strong>Follow it to fixed</strong><span>Every status change lands on the tracker, and in your inbox if you follow it.</span></li>
+				</ol>
 			</div>
 		</section>
 
 		<main class="workspace page-view" id="report-page" data-page-section="report" hidden>
-			<aside class="sidebar" aria-label="Neighborhood issues">
-				<div class="sidebar-heading">
-					<div class="eyebrow"><span class="eyebrow-line"></span> YOUR COMMUNITY</div>
-					<div class="heading-row"><h1>Small fixes.<br><span>Stronger blocks.</span></h1><span class="block-illustration" aria-hidden="true"><i></i><i></i><i></i><b></b></span></div>
-					<p class="intro">Spot local issues, bring neighbors together, and help move things forward.</p>
-				</div>
-
-				<div class="impact-strip" aria-label="Neighborhood impact">
-					<div><strong id="issue-total">12</strong><span>open issues</span></div>
-					<div class="impact-divider"></div>
-					<div><strong>286</strong><span>neighbors in</span></div>
-					<div class="impact-spark" aria-hidden="true">↗</div>
-				</div>
-
-					<div class="list-toolbar">
-					<div><h2>Community issues</h2><span class="nearby-label">ISSUES · <span id="result-count">4</span></span></div>
-					<button class="filter-button" id="filter-button" type="button" aria-label="Filter issues" title="Show all issue types">☷</button>
-				</div>
-				<div class="filter-tabs" role="group" aria-label="Filter issues by category">
-					<button class="filter-tab active" type="button" data-filter="all">All <span>4</span></button>
-					<button class="filter-tab" type="button" data-filter="safety">Safety</button>
-					<button class="filter-tab" type="button" data-filter="access">Access</button>
-					<button class="filter-tab" type="button" data-filter="parks">Parks</button>
-				</div>
-				<section class="issue-list" id="issue-list" aria-live="polite" aria-label="Nearby community issues"></section>
-				<button class="report-button" id="report-button" type="button"><span class="plus">+</span> Report a neighborhood issue</button>
-				<p class="sidebar-footnote"><span class="footnote-mark">i</span> Your location is never shown publicly.</p>
-			</aside>
-
 			<section class="map-area" aria-label="Map of neighborhood issues">
 				<div id="map" role="application" aria-label="Interactive neighborhood map"></div>
-				<div class="map-topline">
-					<div class="map-title"><span class="map-title-dot"></span><span id="map-area-label">The Carolinas</span><span class="map-title-separator">/</span><span class="muted" id="map-style-label">STREET MAP</span></div>
-					<div class="map-actions">
-						<button class="map-action" id="locate-button" type="button" title="Find my location" aria-label="Find my location">◎</button>
+				<div class="map-controls">
+					<button class="map-chip" id="map-area-chip" type="button"><svg aria-hidden="true"><use href="#i-search"/></svg><span id="map-area-label">The Carolinas</span></button>
+					<div class="map-buttons">
+						<button class="map-btn" id="locate-button" type="button" title="Center on my location" aria-label="Center on my location"><svg><use href="#i-locate"/></svg></button>
 						<div class="map-style-selector">
-							<button class="map-action layers-action" id="layers-button" type="button" title="Choose map type" aria-label="Choose map type" aria-haspopup="true" aria-expanded="false" aria-controls="map-style-menu">▦</button>
-							<div class="map-style-menu" id="map-style-menu" role="group" aria-label="Choose map type" hidden>
-								<button class="map-style-option" type="button" data-basemap="terrain" aria-pressed="false"><span class="map-style-glyph terrain-glyph" aria-hidden="true">⌁</span>Terrain</button>
-								<button class="map-style-option active" type="button" data-basemap="street" aria-pressed="true"><span class="map-style-glyph street-glyph" aria-hidden="true">▦</span>Street</button>
+							<button class="map-btn" id="layers-button" type="button" title="Map style" aria-label="Map style" aria-haspopup="true" aria-expanded="false" aria-controls="map-style-menu"><svg><use href="#i-layers"/></svg></button>
+							<div class="map-style-menu" id="map-style-menu" role="group" aria-label="Map style" hidden>
+								<button class="map-style-option active" type="button" data-basemap="street" aria-pressed="true">Street</button>
+								<button class="map-style-option" type="button" data-basemap="terrain" aria-pressed="false">Terrain</button>
 							</div>
 						</div>
 					</div>
 				</div>
-				<div class="map-legend"><span><i class="legend-dot urgent"></i> Needs support</span><span><i class="legend-dot active"></i> Gaining traction</span><span><i class="legend-dot priority-legend"></i> 10+ · High priority</span><span><i class="legend-dot ready"></i> 50 · Council-ready</span></div>
-				<div class="map-credit">A better block starts here. <span>↗</span></div>
-				<div class="map-loading" id="map-loading" aria-live="polite">Loading neighborhood map...</div>
+				<div class="pick-banner" id="pick-banner" hidden>
+					<span>Tap the map where the issue is.</span>
+					<button class="btn btn-small" type="button" id="cancel-pick">Cancel</button>
+				</div>
+				<div class="map-legend" aria-label="Pin colors">
+					<span><i class="dot dot-new"></i>New</span>
+					<span><i class="dot dot-active"></i>5+ backing</span>
+					<span><i class="dot dot-priority"></i>Priority (10+)</span>
+					<span><i class="dot dot-ready"></i>Council-ready (50)</span>
+				</div>
+				<div class="map-loading" id="map-loading" aria-live="polite">Loading map…</div>
 			</section>
+
+			<aside class="sidebar" aria-label="Neighborhood issues">
+				<div class="sidebar-head">
+					<h1 class="sidebar-title">Reports near <span id="sidebar-area">The Carolinas</span></h1>
+					<p class="sidebar-sub"><span id="result-count">0</span> showing. Tap a report to find it on the map.</p>
+				</div>
+				<div class="filter-tabs" role="group" aria-label="Filter by type">
+					<button class="chip active" type="button" data-filter="all">All <span id="filter-all-count">0</span></button>
+					<button class="chip" type="button" data-filter="safety"><i class="cat-dot cat-safety"></i>Street safety</button>
+					<button class="chip" type="button" data-filter="access"><i class="cat-dot cat-access"></i>Accessibility</button>
+					<button class="chip" type="button" data-filter="lighting"><i class="cat-dot cat-lighting"></i>Lighting</button>
+					<button class="chip" type="button" data-filter="parks"><i class="cat-dot cat-parks"></i>Parks</button>
+					<button class="chip" type="button" data-filter="other"><i class="cat-dot cat-other"></i>Other</button>
+				</div>
+				<section class="issue-list" id="issue-list" aria-live="polite" aria-label="Community issues"></section>
+				<div class="sidebar-foot">
+					<button class="btn btn-primary btn-block" id="report-button" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Report an issue</button>
+				</div>
+			</aside>
+			<button class="fab" id="report-fab" type="button" data-action="start-report"><svg aria-hidden="true"><use href="#i-plus"/></svg>Report</button>
 		</main>
 
 		<section class="page-view tool-page" id="converter-page" data-page-section="converter" hidden>
-			<div class="tool-page-heading"><div class="eyebrow"><span class="eyebrow-line"></span> SIDEASSIST · GEMINI CIVIC ASSISTANT</div><h1>From raw note<br><span>to ready request.</span></h1><p>Describe the issue in your own words. Sideassist will organize it into a professional, reviewable public works request.</p></div>
+			<header class="page-head">
+				<h1 class="display-sm">Sideassist</h1>
+				<p>Describe the problem the way you'd tell a neighbor. Sideassist rewrites it as a clear, polite public works request you can review and send.</p>
+			</header>
 			<div class="converter-layout">
-				<form class="converter-form" id="converter-form">
-					<label class="field-label" for="converter-message">What happened?</label>
-					<textarea id="converter-message" name="message" rows="6" maxlength="2000" placeholder="The stop sign at 4th and Main is hidden by tree branches, and drivers can’t see it until they’re in the intersection..." required></textarea>
-					<label class="field-label" for="converter-location">Location <span class="optional">OPTIONAL</span></label>
-					<input id="converter-location" name="location" maxlength="160" placeholder="Street, intersection, or nearby landmark">
-					<div class="converter-actions"><span class="form-hint">Review the draft before sending it.</span><button class="submit-button" id="converter-submit" type="submit">Create formal draft <span>→</span></button></div>
+				<form class="panel converter-form" id="converter-form">
+					<label class="field-label" for="converter-message">What's going on?</label>
+					<textarea id="converter-message" name="message" rows="6" maxlength="2000" placeholder="The stop sign at 4th and Main is hidden by branches. Drivers don't see it until they're in the intersection." required></textarea>
+					<label class="field-label" for="converter-location">Where is it? <span class="optional">Optional</span></label>
+					<input id="converter-location" name="location" maxlength="160" placeholder="Street, intersection, or landmark">
 					<p class="form-error" id="converter-error" role="alert"></p>
+					<button class="btn btn-primary btn-block" id="converter-submit" type="submit">Write my request</button>
+					<p class="hint">You'll review everything before anything is sent.</p>
 				</form>
-				<section class="converter-result" id="converter-result" aria-live="polite" hidden>
-					<div class="result-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> DRAFT FOR REVIEW</div><h2 id="converter-title">Public works request</h2></div><span class="urgency-badge" id="converter-urgency"></span></div>
+				<section class="panel converter-result" id="converter-result" aria-live="polite" hidden>
+					<div class="result-heading">
+						<h2 id="converter-title">Public works request</h2>
+						<span class="badge" id="converter-urgency"></span>
+					</div>
 					<div class="result-meta"><span id="converter-category"></span><span id="converter-result-location"></span></div>
 					<p class="result-summary" id="converter-summary"></p>
-					<label class="field-label" for="converter-subject">Email subject</label><input id="converter-subject" readonly>
-					<label class="field-label" for="converter-body">Email draft</label><textarea id="converter-body" rows="9" readonly></textarea>
-					<div class="converter-actions"><button class="secondary-button" id="converter-copy" type="button">Copy draft</button><button class="submit-button" id="converter-use-report" type="button">Use in report <span>→</span></button></div>
-					<p class="consent-note">Urgency is an AI suggestion, not an official safety assessment. If someone is in immediate danger, contact emergency services.</p>
+					<label class="field-label" for="converter-subject">Email subject</label>
+					<input id="converter-subject" readonly>
+					<label class="field-label" for="converter-body">Email</label>
+					<textarea id="converter-body" rows="10" readonly></textarea>
+					<div class="button-row">
+						<button class="btn btn-ghost" id="converter-copy" type="button">Copy email</button>
+						<button class="btn btn-primary" id="converter-use-report" type="button">Post as a report</button>
+					</div>
+					<p class="hint">Urgency is an AI suggestion, not an official safety assessment. If someone is in danger right now, call 911.</p>
 				</section>
+				<div class="converter-empty" id="converter-empty">
+					<p>Your drafted request will appear here.</p>
+				</div>
 			</div>
 		</section>
 
 		<section class="page-view tool-page" id="tracker-page" data-page-section="tracker" hidden>
-			<div class="tool-page-heading compact-heading"><div class="eyebrow"><span class="eyebrow-line"></span> TRANSPARENT PROGRESS</div><h1>Issue tracker</h1><p>Follow reports from submission through resolution. This page refreshes every 15 seconds; status changes are posted by an authorized coordinator.</p></div>
+			<header class="page-head">
+				<h1 class="display-sm">Issue tracker</h1>
+				<p>Every report, from the moment it's pinned to the day it's fixed. Status changes come from a verified coordinator.</p>
+			</header>
 			<div class="tracker-layout">
-				<div class="tracker-map-wrap"><div id="tracker-map" class="secondary-map" role="application" aria-label="Map of all reported issues"></div><div class="map-attribution-note">All reported issues · shared map data</div></div>
-				<div class="tracker-content"><div class="section-toolbar"><h2>Track an issue</h2><span class="nearby-label">REPORTS · <span id="tracker-count">0</span></span></div><div class="tracker-issue-list" id="tracker-issues"></div><section class="tracker-detail" id="tracker-detail" aria-live="polite"><p class="empty-state">Select a report to see its timeline.</p></section>
-					<details class="admin-status-panel"><summary>Coordinator: update issue status</summary><p class="form-hint" id="coordinator-status-note">Requires a server-side ADMIN_TOKEN. Only coordinators should publish verified progress.</p><label class="field-label" for="tracker-admin-token">Coordinator token</label><input id="tracker-admin-token" type="password" autocomplete="off"><label class="field-label" for="tracker-new-status">New status</label><select id="tracker-new-status"><option value="community_priority">High-priority neighborhood issue</option><option value="sent_to_agency">Sent to local agency</option><option value="in_progress">Work in progress</option><option value="resolved">Resolved</option></select><label class="field-label" for="tracker-status-note">Update note <span class="optional">OPTIONAL</span></label><input id="tracker-status-note" maxlength="240" placeholder="Add a source or short update"><button class="secondary-button" id="tracker-update-status" type="button">Publish status update</button></details>
+				<div class="tracker-list-col">
+					<div class="tracker-map-wrap"><div id="tracker-map" class="secondary-map" role="application" aria-label="Map of tracked issues"></div></div>
+					<div class="list-head"><h2>All reports</h2><span class="count-pill" id="tracker-count">0</span></div>
+					<div class="tracker-issue-list" id="tracker-issues"></div>
+				</div>
+				<div class="tracker-detail-col">
+					<section class="panel tracker-detail" id="tracker-detail" aria-live="polite"><p class="empty-state">Choose a report to see its timeline.</p></section>
+					<details class="panel admin-status-panel">
+						<summary>Coordinator tools</summary>
+						<p class="hint" id="coordinator-status-note">Requires the server's coordinator token.</p>
+						<label class="field-label" for="tracker-admin-token">Coordinator token</label>
+						<input id="tracker-admin-token" type="password" autocomplete="off">
+						<label class="field-label" for="tracker-new-status">Next status</label>
+						<select id="tracker-new-status"></select>
+						<label class="field-label" for="tracker-status-note">Note <span class="optional">Optional</span></label>
+						<input id="tracker-status-note" maxlength="240" placeholder="Work order number, or a short update">
+						<button class="btn btn-ghost btn-block" id="tracker-update-status" type="button">Publish status</button>
+					</details>
 				</div>
 			</div>
 		</section>
 
 		<section class="page-view tool-page" id="petitions-page" data-page-section="petitions" hidden>
-			<div class="tool-page-heading compact-heading"><div class="eyebrow"><span class="eyebrow-line"></span> COMMUNITY MOMENTUM</div><h1>Petitions</h1><p>Verified neighbors can endorse an issue. Ten endorsements flag it for priority review; 50 reaches the council-ready milestone.</p></div>
-			<div class="petition-summary"><div><strong>10</strong><span>endorsements · priority flag</span></div><div><strong>50</strong><span>endorsements · council-ready draft</span></div></div>
-			<section class="petition-list" id="petition-list" aria-live="polite" aria-label="Community petitions"></section>
+			<header class="page-head">
+				<h1 class="display-sm">Petitions</h1>
+				<p>Back the issues you want fixed. At 10 endorsements a report is flagged as a neighborhood priority; at 50 it's ready to bring to city council.</p>
+			</header>
+			<section class="petition-list" id="petition-list" aria-live="polite" aria-label="Petitions"></section>
 		</section>
 
 		<section class="page-view tool-page" id="heatmap-page" data-page-section="heatmap" hidden>
-			<div class="tool-page-heading compact-heading"><div class="eyebrow"><span class="eyebrow-line"></span> COMMUNITY ISSUE DENSITY</div><h1>Neighborhood heatmap</h1><p>Hotter areas indicate more nearby reports and endorsements. Colors are a visual summary, not an official safety rating.</p></div>
-			<div class="heatmap-layout"><div class="heatmap-map-wrap"><div id="heat-map" class="secondary-map" role="application" aria-label="Heatmap of reports and community support"></div><div class="heatmap-legend"><span><i class="heat-swatch low"></i>Fewer reports</span><span><i class="heat-swatch mid"></i>Growing support</span><span><i class="heat-swatch high"></i>High activity</span></div></div><div class="heatmap-sidebar"><div class="section-toolbar"><h2>Hotspots</h2><span class="nearby-label">CURRENT · <span id="hotspot-count">0</span></span></div><div id="hotspot-list" class="hotspot-list"></div></div></div>
-		</section>
-
-		<dialog class="modal" id="report-modal" aria-labelledby="report-title">
-			<form class="modal-content" id="report-form">
-				<button class="modal-close" type="button" data-close="report-modal" aria-label="Close">×</button>
-				<div class="eyebrow"><span class="eyebrow-line"></span> MAKE IT BETTER</div>
-				<h2 id="report-title">What needs fixing?</h2>
-				<p class="modal-intro">You can report as a guest. Sign in if you’d also like to support petitions and get email updates.</p>
-				<label class="field-label" for="issue-title">Issue title</label>
-				<input id="issue-title" name="title" maxlength="70" placeholder="e.g. Crosswalk paint has faded" required>
-				<label class="field-label" for="issue-category">What kind of issue?</label>
-				<select id="issue-category" name="category" required>
-					<option value="safety">Street safety</option><option value="access">Accessibility</option><option value="parks">Parks & public space</option><option value="lighting">Street lighting</option><option value="other">Something else</option>
-				</select>
-				<label class="field-label" for="issue-description">What’s happening?</label>
-				<textarea id="issue-description" name="description" rows="3" maxlength="400" placeholder="Where is it, and how does it affect the neighborhood?" required></textarea>
-				<div class="form-row">
-					<label class="field-label" for="issue-photo">Add a photo <span class="optional">OPTIONAL</span></label>
-					<input class="file-input" id="issue-photo" name="photo" type="file" accept="image/*">
+			<header class="page-head">
+				<h1 class="display-sm">Heatmap</h1>
+				<p>Warmer areas have more reports and more neighbors backing them. It's a picture of community attention, not an official safety rating.</p>
+			</header>
+			<div class="heatmap-layout">
+				<div class="heatmap-map-wrap">
+					<div id="heat-map" class="secondary-map" role="application" aria-label="Heatmap of reports"></div>
+					<div class="heat-legend"><span>Less</span><i class="heat-ramp"></i><span>More</span></div>
 				</div>
-				<div class="location-note"><span>⌖</span><span><strong id="report-location-label">The Carolinas</strong><small id="report-location-help">Your report will be placed near this selected area. Add a precise pin if you like.</small></span><button class="pick-location" id="pick-location" type="button">Pick spot</button></div>
+				<aside class="heatmap-sidebar">
+					<div class="list-head"><h2>Hotspots</h2><span class="count-pill" id="hotspot-count">0</span></div>
+					<ol id="hotspot-list" class="hotspot-list"></ol>
+				</aside>
+			</div>
+		</section>
+		</div>
+
+		<nav class="tabbar" aria-label="Main">
+			<button class="tab" type="button" data-page-target="report"><svg><use href="#i-map"/></svg><span>Map</span></button>
+			<button class="tab" type="button" data-page-target="tracker"><svg><use href="#i-track"/></svg><span>Tracker</span></button>
+			<button class="tab" type="button" data-page-target="petitions"><svg><use href="#i-hand"/></svg><span>Petitions</span></button>
+			<button class="tab" type="button" data-page-target="heatmap"><svg><use href="#i-heat"/></svg><span>Heatmap</span></button>
+			<button class="tab" type="button" data-page-target="converter"><svg><use href="#i-spark"/></svg><span>Assist</span></button>
+		</nav>
+
+		<!-- Report an issue -->
+		<dialog class="sheet" id="report-modal" aria-labelledby="report-title">
+			<form class="sheet-body" id="report-form" novalidate>
+				<div class="sheet-head">
+					<h2 id="report-title">Report an issue</h2>
+					<button class="icon-btn" type="button" data-close="report-modal" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+				</div>
+				<p class="sheet-intro" id="report-intro">Anyone can report. Sign in to endorse issues and get updates.</p>
+
+				<fieldset class="field">
+					<legend class="field-label">Photos <span class="optional">Up to 4</span></legend>
+					<div class="photo-picker" id="photo-picker">
+						<div class="photo-previews" id="photo-previews"></div>
+						<div class="photo-actions" id="photo-actions">
+							<label class="photo-add photo-add-camera" for="issue-camera">
+								<svg aria-hidden="true"><use href="#i-camera"/></svg><span>Take photo</span>
+							</label>
+							<label class="photo-add" for="issue-photos">
+								<svg aria-hidden="true"><use href="#i-image"/></svg><span>Choose photos</span>
+							</label>
+						</div>
+						<input class="sr-only" id="issue-camera" type="file" accept="image/*" capture="environment">
+						<input class="sr-only" id="issue-photos" type="file" accept="image/*" multiple>
+						<p class="hint photo-hint" id="photo-hint">Photos help crews find and size up the problem. Large photos are shrunk before upload.</p>
+					</div>
+				</fieldset>
+
+				<label class="field-label" for="issue-title">Short title</label>
+				<input id="issue-title" name="title" maxlength="70" placeholder="Crosswalk paint has worn away" required>
+
+				<fieldset class="field">
+					<legend class="field-label">Type of issue</legend>
+					<div class="choice-group" id="category-choices">
+						<label class="choice"><input type="radio" name="category" value="safety" checked><span><i class="cat-dot cat-safety"></i>Street safety</span></label>
+						<label class="choice"><input type="radio" name="category" value="access"><span><i class="cat-dot cat-access"></i>Accessibility</span></label>
+						<label class="choice"><input type="radio" name="category" value="lighting"><span><i class="cat-dot cat-lighting"></i>Lighting</span></label>
+						<label class="choice"><input type="radio" name="category" value="parks"><span><i class="cat-dot cat-parks"></i>Parks</span></label>
+						<label class="choice"><input type="radio" name="category" value="other"><span><i class="cat-dot cat-other"></i>Other</span></label>
+					</div>
+				</fieldset>
+
+				<label class="field-label" for="issue-description">What's happening?</label>
+				<textarea id="issue-description" name="description" rows="3" maxlength="400" placeholder="Where exactly is it, and who does it affect?" required></textarea>
+				<div class="char-count"><span id="description-count">0</span>/400</div>
+
+				<fieldset class="field">
+					<legend class="field-label">Location</legend>
+					<div class="location-card">
+						<svg aria-hidden="true"><use href="#i-pin"/></svg>
+						<div><strong id="report-location-label">The Carolinas</strong><small id="report-location-help">Placed in your selected area. Add an exact spot for a faster fix.</small></div>
+					</div>
+					<div class="button-row tight">
+						<button class="btn btn-ghost btn-small" id="use-my-location" type="button"><svg aria-hidden="true"><use href="#i-locate"/></svg>Use my location</button>
+						<button class="btn btn-ghost btn-small" id="pick-location" type="button"><svg aria-hidden="true"><use href="#i-map"/></svg>Pick on map</button>
+					</div>
+				</fieldset>
+
 				<p class="form-error" id="form-error" role="alert"></p>
-				<button class="submit-button" type="submit">Post to the neighborhood <span>→</span></button>
-				<p class="consent-note">By posting, you agree to keep reports respectful and specific.</p>
+				<button class="btn btn-primary btn-block btn-lg" id="report-submit" type="submit">Post report</button>
+				<p class="hint center">Keep it respectful and specific. Don't include faces or license plates.</p>
 			</form>
 		</dialog>
 
-		<dialog class="modal" id="account-modal" aria-labelledby="account-title">
-			<div class="modal-content">
-				<button class="modal-close" type="button" data-close="account-modal" aria-label="Close">×</button>
-				<div class="eyebrow"><span class="eyebrow-line"></span> SIDEWALK ACCOUNT</div>
-				<h2 id="account-title">Create your account</h2>
-				<p class="modal-intro" id="account-intro">Verify your email to support petitions and report neighborhood issues.</p>
-				<div class="active-account" id="active-account"></div>
-				<div class="account-mode" role="group" aria-label="Account action">
-					<button class="account-mode-button active" type="button" data-account-mode="register" aria-pressed="true">Create account</button>
-					<button class="account-mode-button" type="button" data-account-mode="login" aria-pressed="false">Sign in</button>
+		<!-- Account -->
+		<dialog class="sheet sheet-narrow" id="account-modal" aria-labelledby="account-title">
+			<div class="sheet-body">
+				<div class="sheet-head">
+					<h2 id="account-title">Sign in</h2>
+					<button class="icon-btn" type="button" data-close="account-modal" aria-label="Close"><svg><use href="#i-close"/></svg></button>
 				</div>
-				<div class="account-settings" id="account-settings" hidden>
-					<label class="email-updates-option"><input id="account-email-updates" type="checkbox"><span>Email me when petitions I support reach their goal.</span></label>
-					<button class="settings-save" id="save-email-preferences" type="button">Save email preference</button>
+				<p class="sheet-intro" id="account-intro"></p>
+				<div class="notice" id="account-notice" role="status" hidden></div>
+
+				<div class="segmented" id="account-tabs" role="tablist" aria-label="Account">
+					<button type="button" role="tab" data-account-mode="login" aria-selected="true">Sign in</button>
+					<button type="button" role="tab" data-account-mode="register" aria-selected="false">Create account</button>
 				</div>
-				<form class="account-form" id="account-form">
+
+				<form class="account-form" id="account-form" novalidate>
 					<div id="account-name-field">
 						<label class="field-label" for="account-name">Your name</label>
-						<input id="account-name" name="name" maxlength="60" autocomplete="name" placeholder="e.g. Jordan Davis" required>
+						<input id="account-name" name="name" maxlength="60" autocomplete="name" placeholder="Jordan Davis">
 					</div>
-					<label class="field-label" for="account-email">Email address</label>
-					<input id="account-email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.com" required>
-					<label class="field-label" for="account-password">Password</label>
-					<input id="account-password" name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" placeholder="At least 12 characters" required>
-					<label class="email-updates-option" id="email-updates-field"><input id="email-updates" name="emailUpdates" type="checkbox"><span>Email me when petitions I support reach their goal.</span></label>
-					<p class="account-error" id="account-error" role="alert"></p>
-					<a class="verification-link" id="verification-link" href="#" hidden></a>
-					<button class="submit-button" id="account-submit" type="submit">Create account <span>→</span></button>
+					<div id="account-email-field">
+						<label class="field-label" for="account-email">Email</label>
+						<input id="account-email" name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="254" autocomplete="email" placeholder="you@example.com">
+					</div>
+					<div id="account-password-field">
+						<div class="label-row">
+							<label class="field-label" for="account-password" id="account-password-label">Password</label>
+							<button class="text-link small" type="button" id="forgot-link">Forgot password?</button>
+						</div>
+						<div class="password-wrap">
+							<input id="account-password" name="password" type="password" maxlength="200" autocomplete="current-password">
+							<button class="icon-btn ghost" type="button" id="toggle-password" aria-label="Show password" aria-pressed="false"><svg><use href="#i-eye"/></svg></button>
+						</div>
+						<p class="hint" id="password-hint" hidden>At least 8 characters.</p>
+					</div>
+					<label class="check" id="email-updates-field"><input id="email-updates" name="emailUpdates" type="checkbox" checked><span>Email me when issues I back reach a milestone</span></label>
+					<p class="form-error" id="account-error" role="alert"></p>
+					<button class="btn btn-primary btn-block btn-lg" id="account-submit" type="submit">Sign in</button>
+					<button class="btn btn-ghost btn-block" id="resend-verification" type="button" hidden>Send a new verification link</button>
+					<button class="text-link center" id="back-to-login" type="button" hidden>Back to sign in</button>
 				</form>
-				<button class="guest-button" id="guest-button" type="button">Continue browsing as a guest</button>
-				<p class="email-delivery-note" id="email-delivery-note" role="status"></p>
-				<p class="consent-note">Only verified accounts can support petitions. Guests can still submit issue reports.</p>
+
+				<div class="account-settings" id="account-settings" hidden>
+					<div class="who">
+						<span class="who-avatar" id="settings-avatar">JD</span>
+						<div><strong id="settings-name"></strong><small id="settings-email"></small></div>
+					</div>
+					<label class="check"><input id="account-email-updates" type="checkbox"><span>Email me about issues I back or follow</span></label>
+					<p class="hint" id="email-delivery-note"></p>
+					<div class="button-row">
+						<button class="btn btn-ghost" id="save-email-preferences" type="button">Save</button>
+						<button class="btn btn-danger-ghost" id="sign-out-button" type="button">Sign out</button>
+					</div>
+				</div>
+
+				<p class="hint center" id="guest-note">Guests can still post reports. An account lets you endorse petitions and follow updates.</p>
 			</div>
 		</dialog>
 
-		<dialog class="modal search-modal" id="search-modal" aria-labelledby="search-title">
-			<div class="modal-content">
-				<button class="modal-close" type="button" data-close="search-modal" aria-label="Close">×</button>
-				<div class="eyebrow"><span class="eyebrow-line"></span> SET YOUR COMMUNITY</div>
-				<h2 id="search-title">Where should we look?</h2>
-				<p class="modal-intro">Search any neighborhood, city, or ZIP code.</p>
-				<form class="place-search-form" id="place-search-form">
-					<label class="sr-only" for="place-query">Neighborhood, city, or ZIP code</label>
-					<input id="place-query" name="query" type="search" autocomplete="off" placeholder="Try Portland, ME or 10001" minlength="2" required>
-					<button class="submit-button" id="place-search-submit" type="submit">Search <span>⌕</span></button>
+		<!-- Area search -->
+		<dialog class="sheet sheet-narrow" id="search-modal" aria-labelledby="search-title">
+			<div class="sheet-body">
+				<div class="sheet-head">
+					<h2 id="search-title">Change area</h2>
+					<button class="icon-btn" type="button" data-close="search-modal" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+				</div>
+				<form class="search-row" id="place-search-form">
+					<label class="sr-only" for="place-query">City, neighborhood, or ZIP code</label>
+					<input id="place-query" name="query" type="search" autocomplete="off" enterkeyhint="search" placeholder="City, neighborhood, or ZIP" minlength="2" required>
+					<button class="btn btn-primary" id="place-search-submit" type="submit">Search</button>
 				</form>
-				<p class="search-status" id="search-status" role="status" aria-live="polite">Choose a result to move the map and set your report area.</p>
-				<div class="place-results" id="place-results" role="listbox" aria-label="Matching neighborhoods"></div>
-				<p class="search-attribution">Place results by <a href="https://www.openstreetmap.org/" target="_blank" rel="noreferrer">OpenStreetMap</a>.</p>
+				<button class="text-link" id="reset-area" type="button">Show all of the Carolinas</button>
+				<p class="hint" id="search-status" role="status" aria-live="polite"></p>
+				<div class="place-results" id="place-results" role="listbox" aria-label="Matching places"></div>
+				<p class="hint right">Search by <a href="https://www.openstreetmap.org/" target="_blank" rel="noreferrer">OpenStreetMap</a></p>
 			</div>
 		</dialog>
 
-		<dialog class="modal" id="petition-modal" aria-labelledby="petition-title">
-			<div class="modal-content petition-content">
-				<button class="modal-close" type="button" data-close="petition-modal" aria-label="Close">×</button>
-				<div class="eyebrow"><span class="eyebrow-line"></span> READY FOR THE NEXT STEP</div>
-				<h2 id="petition-title">Your neighbors showed up.</h2>
-				<p class="modal-intro">This issue has reached its local support goal. Review the message and send it to the right city department.</p>
-				<div class="email-preview"><div class="email-field"><span>TO</span><strong>Local public works department · verify contact</strong></div><div class="email-field"><span>SUBJECT</span><strong id="email-subject"></strong></div><div class="email-body" id="email-body"></div></div>
-				<a class="submit-button send-email" id="send-email" href="#">Review email in your mail app <span>↗</span></a>
-				<p class="consent-note">This demo prepares a draft for you to review; it does not send anything automatically.</p>
+		<!-- Goal reached -->
+		<dialog class="sheet" id="petition-modal" aria-labelledby="petition-title">
+			<div class="sheet-body">
+				<div class="sheet-head">
+					<h2 id="petition-title">Fifty neighbors are in.</h2>
+					<button class="icon-btn" type="button" data-close="petition-modal" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+				</div>
+				<p class="sheet-intro">This issue hit its goal. Here's a draft for the city's public works department. Check the contact address before you send it.</p>
+				<div class="email-preview">
+					<div class="email-field"><span>To</span><strong>Your public works department (confirm the address)</strong></div>
+					<div class="email-field"><span>Subject</span><strong id="email-subject"></strong></div>
+					<div class="email-body" id="email-body"></div>
+				</div>
+				<a class="btn btn-primary btn-block" id="send-email" href="#">Open in my email app</a>
+				<p class="hint center">Sidewalk doesn't send this for you. You stay in control.</p>
 			</div>
+		</dialog>
+
+		<!-- Photo viewer -->
+		<dialog class="lightbox" id="lightbox" aria-label="Photo viewer">
+			<button class="icon-btn lb-close" type="button" data-close="lightbox" aria-label="Close photo"><svg><use href="#i-close"/></svg></button>
+			<button class="icon-btn lb-nav lb-prev" type="button" id="lb-prev" aria-label="Previous photo"><svg><use href="#i-chev-l"/></svg></button>
+			<figure><img id="lb-img" alt=""><figcaption id="lb-caption"></figcaption></figure>
+			<button class="icon-btn lb-nav lb-next" type="button" id="lb-next" aria-label="Next photo"><svg><use href="#i-chev-r"/></svg></button>
 		</dialog>
 
 		<div class="toast" id="toast" role="status" aria-live="polite"></div>
-		<section class="chat-widget" id="chat-widget" aria-label="Sidewalk Civic Assistant">
+
+		<section class="chat-widget" id="chat-widget" aria-label="Sidewalk assistant">
 			<div class="chat-panel" id="chat-panel" hidden>
 				<header class="chat-header">
-					<div><span class="chat-status-dot"></span><strong>Sidewalk Assistant</strong><small>Local civic help</small></div>
-				<button class="chat-close" id="chat-close" type="button" aria-label="Close assistant">×</button>
+					<div><strong>Ask Sidewalk</strong><small>Help with local reporting</small></div>
+					<button class="icon-btn" id="chat-close" type="button" aria-label="Close assistant"><svg><use href="#i-close"/></svg></button>
 				</header>
-				<div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-relevant="additions text">
-					<div class="chat-message assistant-message">Hi! I can help you describe a local issue, find the right next steps, or draft a clear request to your city.</div>
+				<div class="chat-messages" id="chat-messages" role="log" aria-live="polite">
+					<div class="chat-message assistant-message">Hi! I can help you describe an issue, figure out who handles it, or draft a note to your city.</div>
 				</div>
 				<form class="chat-form" id="chat-form">
-					<label class="sr-only" for="chat-input">Message Sidewalk Assistant</label>
-					<textarea id="chat-input" name="message" rows="1" maxlength="2000" placeholder="Ask about a local issue..." required></textarea>
-					<button class="chat-send" id="chat-send" type="submit" aria-label="Send message" title="Send message"><span aria-hidden="true">↑</span></button>
+					<label class="sr-only" for="chat-input">Message</label>
+					<textarea id="chat-input" name="message" rows="1" maxlength="2000" placeholder="Ask about a local issue" enterkeyhint="send" required></textarea>
+					<button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg><use href="#i-send"/></svg></button>
 				</form>
-				<p class="chat-disclaimer">AI can make mistakes. Confirm important details with your local agency.</p>
+				<p class="chat-disclaimer">AI can be wrong. Confirm details with your local agency.</p>
 			</div>
-			<button class="chat-launcher" id="chat-launcher" type="button" aria-expanded="false" aria-controls="chat-panel"><span aria-hidden="true">✳</span><span>Ask Sidewalk</span></button>
+			<button class="chat-launcher" id="chat-launcher" type="button" aria-expanded="false" aria-controls="chat-panel"><svg aria-hidden="true"><use href="#i-chat"/></svg><span>Ask Sidewalk</span></button>
 		</section>
 	</body>
 </html>
