@@ -3,7 +3,7 @@ const dotenv = require('dotenv');
 const path = require('node:path');
 dotenv.config();
 
-const { GoogleGenAI, Type } = require('@google/genai');
+const { createAi, describeAiError } = require('./ai');
 const communityRoutes = require('./community');
 
 const app = express();
@@ -17,9 +17,10 @@ app.use(express.static('public'));
 app.use('/vendor/leaflet-heat', express.static(path.join(__dirname, 'node_modules', 'leaflet.heat', 'dist')));
 app.use('/api', communityRoutes);
 
-// Keep the Gemini key on the server; never send it to the browser.
-const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
-app.locals.gemini = ai;
+// Keep AI keys on the server; never send them to the browser.
+const ai = createAi();
+app.locals.ai = ai;
+console.log(ai ? `AI assistant: ${ai.provider} (${ai.model})` : 'AI assistant: off (set OPENAI_API_KEY or GEMINI_API_KEY)');
 
 app.post('/api/convert', async (req, res) => {
     const { message, location = '' } = req.body || {};
@@ -29,34 +30,31 @@ app.post('/api/convert', async (req, res) => {
     if (typeof location !== 'string' || location.length > 160) {
         return res.status(400).json({ error: 'Location must be 160 characters or fewer.' });
     }
-    if (!ai) return res.status(503).json({ error: 'The AI converter is not configured. Add GEMINI_API_KEY to the server environment.' });
+    if (!ai) return res.status(503).json({ error: 'The AI converter is not configured. Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment.' });
 
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            config: {
-                systemInstruction: 'You help residents turn informal infrastructure complaints into clear, respectful public works requests. Preserve the user’s facts. Never invent addresses, laws, code violations, agency names, or injuries. Do not claim the request was submitted or legally verified. Assign urgency based only on described risk: Routine, Elevated, or Urgent. For immediate danger, say to contact emergency services separately.',
-                responseMimeType: 'application/json',
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        title: { type: Type.STRING },
-                        category: { type: Type.STRING, enum: ['Street safety', 'Accessibility', 'Parks & public space', 'Street lighting', 'Other'] },
-                        urgency: { type: Type.STRING, enum: ['Routine', 'Elevated', 'Urgent'] },
-                        summary: { type: Type.STRING },
-                        emailSubject: { type: Type.STRING },
-                        emailBody: { type: Type.STRING },
-                    },
-                    required: ['title', 'category', 'urgency', 'summary', 'emailSubject', 'emailBody'],
+        const draft = await ai.generateJson({
+            system: 'You help residents turn informal infrastructure complaints into clear, respectful public works requests. Preserve the user’s facts. Never invent addresses, laws, code violations, agency names, or injuries. Do not claim the request was submitted or legally verified. Assign urgency based only on described risk: Routine, Elevated, or Urgent. For immediate danger, say to contact emergency services separately.',
+            schema: {
+                type: 'object',
+                properties: {
+                    title: { type: 'string' },
+                    category: { type: 'string', enum: ['Street safety', 'Accessibility', 'Parks & public space', 'Street lighting', 'Other'] },
+                    urgency: { type: 'string', enum: ['Routine', 'Elevated', 'Urgent'] },
+                    summary: { type: 'string' },
+                    emailSubject: { type: 'string' },
+                    emailBody: { type: 'string' },
                 },
+                required: ['title', 'category', 'urgency', 'summary', 'emailSubject', 'emailBody'],
             },
-            contents: `Location provided by user: ${location.trim() || 'Not provided'}\n\nResident's description:\n${message.trim()}`,
+            prompt: `Location provided by user: ${location.trim() || 'Not provided'}\n\nResident's description:\n${message.trim()}`,
         });
-        const draft = JSON.parse(response.text || '{}');
         if (!draft.title || !draft.emailBody) return res.status(502).json({ error: 'The AI returned an incomplete draft. Please try again.' });
         res.json({ draft });
     } catch (error) {
         console.error('Civic converter failed:', error.message);
+        const friendly = describeAiError(error);
+        if (friendly) return res.status(503).json({ error: friendly });
         res.status(502).json({ error: 'Could not create a formal draft. Please try again.' });
     }
 });
@@ -70,41 +68,29 @@ app.post('/api/chat', async (req, res) => {
     }
 
     if (!ai) {
-        return res.status(503).json({ error: 'The AI assistant is not configured. Add GEMINI_API_KEY to the server environment.' });
+        return res.status(503).json({ error: 'The AI assistant is not configured. Add OPENAI_API_KEY or GEMINI_API_KEY to the server environment.' });
     }
 
     const priorMessages = Array.isArray(history)
         ? history
             .filter((entry) => entry && ['user', 'model'].includes(entry.role) && typeof entry.text === 'string')
             .slice(-12)
-            .map((entry) => ({ role: entry.role, parts: [{ text: entry.text.slice(0, 2000) }] }))
+            .map((entry) => ({ role: entry.role, text: entry.text.slice(0, 2000) }))
         : [];
 
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            config: {
-                systemInstruction: 'You are Sidewalk Civic Assistant, a practical and respectful guide to local infrastructure reporting in North and South Carolina. Help residents describe issues clearly, understand common civic reporting steps, and draft concise messages. Do not claim to submit reports, contact officials, verify local laws, or know agency contacts unless the user provides that information. Ask a clarifying question when location or details matter. Be transparent when uncertain.',
-            },
-            contents: [
-                ...priorMessages,
-                { role: 'user', parts: [{ text: message.trim() }] },
-            ],
+        const reply = await ai.chat({
+            system: 'You are Sidewalk Civic Assistant, a practical and respectful guide to local infrastructure reporting in North and South Carolina. Help residents describe issues clearly, understand common civic reporting steps, and draft concise messages. Do not claim to submit reports, contact officials, verify local laws, or know agency contacts unless the user provides that information. Ask a clarifying question when location or details matter. Be transparent when uncertain.',
+            history: priorMessages,
+            message: message.trim(),
         });
 
-        if (!response.text) return res.status(502).json({ error: 'The assistant returned an empty response. Please try again.' });
-        res.json({ reply: response.text });
+        if (!reply) return res.status(502).json({ error: 'The assistant returned an empty response. Please try again.' });
+        res.json({ reply });
     } catch (error) {
-        console.error('Error communicating with Gemini:', error.message);
-        if (error.status === 400 && /API_KEY_INVALID|API key not valid/i.test(error.message || '')) {
-            return res.status(503).json({ error: 'Gemini rejected the API key. Add a valid GEMINI_API_KEY to .env, then restart the server.' });
-        }
-        if (error.status === 401 || /ACCESS_TOKEN_TYPE_UNSUPPORTED|UNAUTHENTICATED/.test(error.message || '')) {
-            return res.status(503).json({ error: 'Gemini rejected this credential type. Use a Gemini API key from Google AI Studio, not an OAuth/access token, then restart the server.' });
-        }
-        if (error.status === 429) {
-            return res.status(503).json({ error: 'The AI service is temporarily rate-limited. Please try again in a moment.' });
-        }
+        console.error('AI assistant failed:', error.message);
+        const friendly = describeAiError(error);
+        if (friendly) return res.status(503).json({ error: friendly });
         res.status(502).json({ error: 'Could not get a reply from the AI service. Please try again shortly.' });
     }
 });

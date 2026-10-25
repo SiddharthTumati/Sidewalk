@@ -3,7 +3,6 @@ const path = require('node:path');
 const { promisify } = require('node:util');
 const express = require('express');
 const nodemailer = require('nodemailer');
-const { Type } = require('@google/genai');
 const { DatabaseSync } = require('node:sqlite');
 
 const router = express.Router();
@@ -312,23 +311,18 @@ async function reviewIssueWithAi(issueId, ai) {
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
   if (!issue || issue.status !== 'submitted') return;
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      config: {
-        systemInstruction: 'Review a resident report for clarity and civic routing. Do not claim the reported condition is true or verified on site. Never invent laws or safety facts. Return only a concise completeness note and suggested urgency.',
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            urgency: { type: Type.STRING, enum: ['Routine', 'Elevated', 'Urgent'] },
-            summary: { type: Type.STRING },
-          },
-          required: ['urgency', 'summary'],
+    const review = await ai.generateJson({
+      system: 'Review a resident report for clarity and civic routing. Do not claim the reported condition is true or verified on site. Never invent laws or safety facts. Return only a concise completeness note and suggested urgency.',
+      schema: {
+        type: 'object',
+        properties: {
+          urgency: { type: 'string', enum: ['Routine', 'Elevated', 'Urgent'] },
+          summary: { type: 'string' },
         },
+        required: ['urgency', 'summary'],
       },
-      contents: `Issue category: ${issue.category_label}\nLocation: ${issue.distance}\nTitle: ${issue.title}\nDescription: ${issue.description}`,
+      prompt: `Issue category: ${issue.category_label}\nLocation: ${issue.distance}\nTitle: ${issue.title}\nDescription: ${issue.description}`,
     });
-    const review = JSON.parse(response.text || '{}');
     if (!['Routine', 'Elevated', 'Urgent'].includes(review.urgency) || typeof review.summary !== 'string') return;
     const latestIssue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
     if (!latestIssue || latestIssue.status !== 'submitted') return;
@@ -655,7 +649,7 @@ router.post('/issues', async (req, res) => {
   if (req.user) db.prepare('INSERT OR IGNORE INTO issue_subscriptions (issue_id, user_id, created_at) VALUES (?, ?, ?)').run(id, req.user.id, createdAt);
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(id);
   res.status(201).json({ issue: serializeIssue(issue, req.user?.id) });
-  if (req.app.locals.gemini) setImmediate(() => reviewIssueWithAi(id, req.app.locals.gemini));
+  if (req.app.locals.ai) setImmediate(() => reviewIssueWithAi(id, req.app.locals.ai));
 });
 
 router.post('/issues/:id/support', requireVerifiedUser, async (req, res) => {
