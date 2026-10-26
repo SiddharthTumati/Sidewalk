@@ -229,10 +229,15 @@ function supportControl(issue, verb = "Back this") {
 }
 
 /* ---------- Area ---------- */
+// Same box the server uses: Sidewalk covers North and South Carolina.
+function inCarolinas(lat, lng) {
+  return lat >= 31.9 && lat <= 36.7 && lng >= -84.4 && lng <= -75.3;
+}
+
 function loadSavedArea() {
   try {
     const saved = JSON.parse(localStorage.getItem("sidewalk-area"));
-    if (saved && typeof saved.label === "string" && Number.isFinite(saved.lat) && Number.isFinite(saved.lng) && saved.label !== DEFAULT_AREA.label) return saved;
+    if (saved && typeof saved.label === "string" && Number.isFinite(saved.lat) && Number.isFinite(saved.lng) && saved.label !== DEFAULT_AREA.label && inCarolinas(saved.lat, saved.lng)) return saved;
   } catch {}
   return { ...DEFAULT_AREA };
 }
@@ -244,7 +249,10 @@ function updateAreaLabels() {
 
 function fitArea(target, zoom) {
   if (!target) return;
-  if (currentArea.bounds) target.fitBounds(currentArea.bounds, { padding: [30, 30], maxZoom: isDesktop() ? 7 : 6 });
+  // A brand-new map has no position yet, so it can't animate ("fly"); jump straight there.
+  const fresh = !target._loaded;
+  if (currentArea.bounds) target.fitBounds(currentArea.bounds, { padding: [30, 30], maxZoom: isDesktop() ? 7 : 6, animate: !fresh });
+  else if (fresh) target.setView([currentArea.lat, currentArea.lng], zoom);
   else target.flyTo([currentArea.lat, currentArea.lng], zoom, { duration: 0.7 });
 }
 
@@ -433,6 +441,17 @@ function renderMarkers() {
 }
 
 function initMap() {
+  try {
+    buildMap();
+  } catch (error) {
+    console.error("Map failed to start:", error);
+    map = null;
+    $("#map-loading").textContent = "The map couldn't load. Refresh to try again.";
+    $("#map-loading").classList.remove("hidden");
+  }
+}
+
+function buildMap() {
   if (!window.L) {
     $("#map-loading").textContent = "The map couldn't load. Refresh to try again.";
     return;
@@ -464,8 +483,13 @@ function setBasemap(style) {
 
 function createSecondaryMap(id) {
   const m = L.map(id, { zoomControl: isDesktop(), scrollWheelZoom: false });
-  fitArea(m, 10);
   L.tileLayer(BASEMAPS.street.url, { maxZoom: 19, attribution: BASEMAPS.street.attribution }).addTo(m);
+  try {
+    fitArea(m, 10);
+  } catch (error) {
+    console.error("Map view failed, showing the Carolinas instead:", error);
+    m.fitBounds(DEFAULT_AREA.bounds);
+  }
   return m;
 }
 
@@ -1213,11 +1237,14 @@ async function searchPlaces(query) {
   $("#place-results").replaceChildren();
   setLoading(button, true);
   try {
-    const params = new URLSearchParams({ q: query, format: "jsonv2", addressdetails: "1", limit: "6", countrycodes: "us" });
+    const params = new URLSearchParams({ q: query, format: "jsonv2", addressdetails: "1", limit: "8", countrycodes: "us", viewbox: "-84.4,36.7,-75.3,31.9", bounded: "1" });
     const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`);
     if (!response.ok) throw new Error("Place search is busy right now. Try again in a moment.");
-    placeResults = (await response.json()).filter((r) => Number.isFinite(Number(r.lat)) && Number.isFinite(Number(r.lon)));
-    status.textContent = placeResults.length ? "" : "No matches. Try a nearby city or a ZIP code.";
+    placeResults = (await response.json())
+      .filter((r) => Number.isFinite(Number(r.lat)) && Number.isFinite(Number(r.lon)))
+      .filter((r) => ["North Carolina", "South Carolina"].includes(r.address?.state))
+      .slice(0, 6);
+    status.textContent = placeResults.length ? "" : "No matches in North or South Carolina. Try a city, town, or ZIP code there.";
     $("#place-results").innerHTML = placeResults.map((r, i) => `<button class="place-result" type="button" role="option" data-place-index="${i}"><svg aria-hidden="true"><use href="#i-pin"/></svg><span><strong>${escapeHtml(placeLabel(r))}</strong><small>${escapeHtml(r.display_name)}</small></span></button>`).join("");
   } catch (error) {
     status.textContent = error instanceof TypeError ? "Couldn't reach place search. Check your connection." : error.message;

@@ -35,6 +35,8 @@ for (const page of ['privacy', 'terms', 'ai', 'guidelines']) {
 
 // Serves all files inside your public folder (index.html, style.css, app.js)
 app.use(express.static('public'));
+// The map library is served from this site (not a CDN), so blocked or slow CDNs can't break the map.
+app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules', 'leaflet', 'dist'), { maxAge: '7d' }));
 app.use('/vendor/leaflet-heat', express.static(path.join(__dirname, 'node_modules', 'leaflet.heat', 'dist')));
 // A broad per-IP ceiling on all API traffic; individual routes have tighter limits.
 app.use('/api', limit({ name: 'api', max: 600, windowMs: 5 * 60 * 1000, message: 'Too many requests from your network. Please slow down and try again in a few minutes.' }));

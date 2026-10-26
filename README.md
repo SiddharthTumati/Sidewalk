@@ -54,7 +54,7 @@ photos, chat)                                   photos, petitions,
                                                 one file on a volume
 ```
 
-**Tech stack:** Node.js 22, Express 5, built-in `node:sqlite`, Leaflet + leaflet.heat, vanilla HTML/CSS/JavaScript (no front-end framework), Brevo for email, and Groq (Llama / GPT-OSS models) for AI, with OpenAI and Gemini supported as alternatives. Hosted on Railway with a persistent volume.
+**Tech stack:** Node.js 22, Express 5, built-in `node:sqlite`, Leaflet + leaflet.heat (served from the app itself, not a CDN), vanilla HTML/CSS/JavaScript (no front-end framework), Brevo for email, and Groq (Llama / GPT-OSS models) for AI, with OpenAI and Gemini supported as alternatives. Hosted on Railway with a persistent volume.
 
 ### A few pieces worth looking at
 
