@@ -26,7 +26,8 @@ app.get('/healthz', (req, res) => {
 // Only new reports carry photos (up to four, compressed, as base64); everything else stays small.
 const reportJson = express.json({ limit: '14mb' });
 const smallJson = express.json({ limit: '64kb' });
-app.use((req, res, next) => (req.method === 'POST' && req.path === '/api/issues' ? reportJson : smallJson)(req, res, next));
+const photoRoute = (req) => req.method === 'POST' && (req.path === '/api/issues' || /^\/api\/issues\/[^/]+\/after-photos$/.test(req.path));
+app.use((req, res, next) => (photoRoute(req) ? reportJson : smallJson)(req, res, next));
 
 // Shared report links: /r/<id> shows a preview card in texts and social posts, then opens the report.
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -48,6 +49,9 @@ app.get('/r/:id', limit({ name: 'share-page', max: 120, windowMs: 60 * 1000 }), 
 <link rel="icon" href="/icon-192.png"><link rel="stylesheet" href="/style.css">
 </head><body class="legal-page"><main style="padding:40px 20px;text-align:center"><p>Opening <a href="${escapeHtml(target)}">${escapeHtml(share.title)}</a> on Sidewalk…</p></main></body></html>`);
 });
+
+// Printable council packet for one report.
+app.get('/packet/:id', (req, res) => res.sendFile(path.join(__dirname, 'public', 'packet.html')));
 
 // Policy pages at clean addresses: /privacy, /terms, /ai, /guidelines
 for (const page of ['privacy', 'terms', 'ai', 'guidelines']) {

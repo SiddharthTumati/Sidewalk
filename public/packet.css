@@ -1,0 +1,42 @@
+/* Council packet: readable on screen, clean on paper. */
+.packet-actions { margin-left: auto; }
+.packet { width: min(100% - 32px, 800px); margin: 24px auto 48px; padding: clamp(20px, 5vw, 44px); border-radius: var(--radius-l); background: var(--surface); box-shadow: 0 1px 0 var(--line); }
+.packet section { margin-top: 26px; }
+.packet h1 { margin-top: 6px; font: 850 clamp(28px, 6vw, 40px)/1.08 var(--display); font-stretch: 112%; }
+.packet h2 { margin-bottom: 8px; font: 800 19px/1.25 var(--display); }
+.packet p { font-size: 16px; line-height: 1.6; }
+.packet-loading { padding: 40px 0; color: var(--muted); text-align: center; }
+.packet-kicker { color: var(--muted); font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.packet-meta { margin-top: 8px; color: var(--muted); }
+.packet-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.packet-count, .packet-qr { display: flex; align-items: center; gap: 14px; padding: 16px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-m); }
+.packet-count strong { font: 850 52px/1 var(--display); }
+.packet-count span { color: var(--muted); font-weight: 600; }
+.packet-qr img { width: 96px; height: 96px; flex: none; }
+.packet-qr span { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.packet-qr small { color: var(--muted); font-weight: 500; word-break: break-all; }
+.packet-photos { margin-top: 18px; }
+.packet-photos figcaption { margin-bottom: 8px; font-weight: 800; }
+.packet-photos div { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.packet-photos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--radius-s); }
+.packet-map { height: 260px; border-radius: var(--radius-m); overflow: hidden; }
+.packet-small { margin-top: 8px; color: var(--muted); font-size: 14px !important; }
+.packet-small a { color: var(--sky); font-weight: 600; }
+.packet-timeline { display: grid; gap: 10px; padding-left: 20px; }
+.packet-timeline span { color: var(--muted); }
+.packet-request { padding: 16px; border-radius: var(--radius-s); background: var(--surface-2); font: 15px/1.6 var(--body); white-space: pre-wrap; }
+.packet-foot { margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; word-break: break-word; }
+@media (max-width: 600px) { .packet-grid { grid-template-columns: 1fr; } }
+
+@media print {
+	@page { margin: 14mm; }
+	:root { color-scheme: light; }
+	body.packet-page { background: #fff !important; color: #111 !important; }
+	.no-print { display: none !important; }
+	.packet { width: auto; margin: 0; padding: 0; box-shadow: none; background: #fff; }
+	.packet section { break-inside: avoid; }
+	.packet-photos img { max-height: 180px; }
+	.packet a { color: #111; }
+}
+.packet-actions .btn-primary { background: var(--paint); color: #1d2125; }
+.packet figure { margin: 0; }

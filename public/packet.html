@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="robots" content="noindex">
+		<title>Council packet · Sidewalk</title>
+		<link rel="icon" href="/icon-192.png">
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..900&family=Public+Sans:ital,wght@0,400..700;1,400&display=swap" rel="stylesheet">
+		<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+		<link rel="stylesheet" href="/style.css">
+		<link rel="stylesheet" href="/legal.css">
+		<link rel="stylesheet" href="/packet.css">
+		<script src="/vendor/leaflet/leaflet.js" defer></script>
+		<script src="/responsibility.js" defer></script>
+		<script src="/packet.js" defer></script>
+	</head>
+	<body class="legal-page packet-page">
+		<header class="topbar no-print">
+			<a class="brand" href="/" aria-label="Back to Sidewalk">
+				<span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+				<span class="brand-word">sidewalk</span>
+			</a>
+			<div class="packet-actions">
+				<button class="btn btn-primary" id="print-packet" type="button">Print or save as PDF</button>
+			</div>
+		</header>
+		<main class="packet" id="packet" aria-live="polite">
+			<p class="packet-loading">Preparing the packet…</p>
+		</main>
+	</body>
+</html>

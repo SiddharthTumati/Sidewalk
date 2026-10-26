@@ -20,7 +20,7 @@ const STAGE_LABELS = {
   resolved: "Fixed",
 };
 const STAGE_ORDER = Object.keys(STAGE_LABELS);
-const PAGES = ["home", "report", "converter", "tracker", "petitions", "heatmap"];
+const PAGES = ["home", "report", "converter", "tracker", "petitions", "heatmap", "staff"];
 const GUEST = { id: "guest", name: "Guest", email: "", guest: true };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -296,7 +296,7 @@ function renderIssueList() {
     const thumb = photos.length
       ? `<div class="card-photos">${photoButton(issue, 0, "card-photo")}${photos.length > 1 ? `<span class="more">+${photos.length - 1}</span>` : ""}</button></div>`
       : "";
-    const priority = (issue.supporters >= PRIORITY_THRESHOLD ? `<span class="badge priority">Priority</span>` : "") + reviewBadge(issue);
+    const priority = issue.status === "resolved" ? `<span class="badge resolved">Fixed</span>` : (issue.supporters >= PRIORITY_THRESHOLD ? `<span class="badge priority">Priority</span>` : "") + reviewBadge(issue);
     return `<article class="issue-card ${issue.id === selectedIssueId ? "selected" : ""}" data-issue="${escapeHtml(issue.id)}" tabindex="0">
       <div class="card-meta"><span class="cat"><i class="cat-dot cat-${escapeHtml(issue.category)}"></i>${escapeHtml(issue.categoryLabel)}</span><span>${escapeHtml(issue.distance)}</span>${priority}</div>
       <h3>${escapeHtml(issue.title)}</h3>
@@ -378,19 +378,32 @@ function renderTrackerDetail(issue) {
       : (index < currentIndex ? "Skipped" : stage === "ai_reviewed" && issue.status === "submitted" ? "Waiting for an automated clarity check" : "Not yet");
     return `<li class="${event ? "complete" : ""} ${index === currentIndex ? "current" : ""}"><span class="tl-dot"></span><span><strong>${STAGE_LABELS[stage]}</strong><small>${note}</small></span></li>`;
   }).join("");
-  const gallery = issue.photos?.length ? `<div class="gallery">${issue.photos.map((_, i) => photoButton(issue, i) + "</button>").join("")}</div>` : "";
-  detail.innerHTML = `<div class="detail-top"><span><i class="cat-dot cat-${escapeHtml(issue.category)}"></i> ${escapeHtml(issue.categoryLabel)}, ${escapeHtml(issue.distance)}</span><span>${timeAgo(issue.createdAt)}</span></div>
+  const fixed = issue.status === "resolved";
+  const afterButtons = (issue.afterPhotos || []).map((url, i) => `<button type="button" data-photo-issue="${escapeHtml(issue.id)}" data-photo-index="${i}" data-photo-set="after" aria-label="View after photo ${i + 1} for ${escapeHtml(issue.title)}"><img src="${escapeHtml(url)}" alt="" loading="lazy" decoding="async"></button>`).join("");
+  const beforeButtons = (issue.photos || []).map((_, i) => photoButton(issue, i) + "</button>").join("");
+  const gallery = issue.afterPhotos?.length
+    ? `<div class="before-after"><figure><figcaption>Before</figcaption><div class="gallery">${beforeButtons || `<p class="hint">No before photo</p>`}</div></figure><figure><figcaption>After</figcaption><div class="gallery">${afterButtons}</div></figure></div>`
+    : beforeButtons ? `<div class="gallery">${beforeButtons}</div>` : "";
+  const fixedBanner = fixed ? `<div class="fixed-banner"><span class="cony-slot cony-lg happy" aria-hidden="true">${conySvg()}</span><div><strong>Fixed!</strong><span>${issue.supporters > 1 ? `Thanks to the ${issue.supporters} neighbors who spoke up.` : "Thanks to everyone who spoke up."}</span></div></div>` : "";
+  const staleNote = issue.stale ? `<div class="notice warn stale-note"><p><strong>No update in ${issue.daysSinceUpdate} days.</strong> A polite follow-up often gets things moving.</p><button class="btn btn-ghost btn-small" type="button" data-followup="${escapeHtml(issue.id)}"><span class="cony-slot" aria-hidden="true">${conySvg()}</span>Draft a follow-up with Cony</button></div>` : "";
+  detail.innerHTML = `${fixedBanner}<div class="detail-top"><span><i class="cat-dot cat-${escapeHtml(issue.category)}"></i> ${escapeHtml(issue.categoryLabel)}, ${escapeHtml(issue.distance)}</span><span>${timeAgo(issue.createdAt)}</span></div>
     <h3>${escapeHtml(issue.title)}</h3>
     <p class="detail-desc">${escapeHtml(issue.description)}</p>
     ${gallery}
     <ol class="timeline" aria-label="Progress">${steps}</ol>
+    ${staleNote}
+    <div class="responsible" id="responsible-${escapeHtml(issue.id)}"></div>
     ${issue.underReview ? `<p class="notice warn">Under review: a coordinator is checking this report's endorsements before it can move forward.</p>` : ""}
     <div class="button-row tight detail-actions">
       <button class="btn ${issue.isSubscribed ? "btn-ghost" : "btn-primary"}" type="button" data-subscribe-issue="${escapeHtml(issue.id)}">${issue.isSubscribed ? "Following. Tap to stop" : "Follow updates"}</button>
       <button class="btn btn-ghost" type="button" data-share="${escapeHtml(issue.id)}"><svg aria-hidden="true"><use href="#i-share"/></svg>Share</button>
     </div>
+    <a class="text-link small packet-link" href="/packet/${encodeURIComponent(issue.id)}" target="_blank" rel="noopener">Council packet (print or save as PDF)</a>
     <p class="hint">The review step checks that a report is clear. It doesn't confirm conditions on site.</p>
     <div class="flag-row">${issue.userFlagged ? `<p class="hint">You flagged this report. Thanks for helping keep Sidewalk useful.</p>` : `<button class="text-link small" type="button" data-flag-issue="${escapeHtml(issue.id)}">Flag this report</button>`}</div>`;
+
+  fillResponsibility(issue);
+  if (fixed) celebrateOnce(issue);
 
   const nextStage = nextStageFor(issue);
   const enabled = coordinatorConfigured && Boolean(nextStage);
@@ -574,6 +587,7 @@ function navigateTo(page, updateUrl = true) {
   if (currentPage === "report") {
     if (!map) initMap(); else requestAnimationFrame(() => map.invalidateSize());
   }
+  if (currentPage === "staff") loadStaffQueue();
   if (currentPage === "tracker" && window.L) {
     if (!trackerMap) trackerMap = createSecondaryMap("tracker-map");
     requestAnimationFrame(() => { trackerMap.invalidateSize(); renderSecondaryMaps(); });
@@ -596,7 +610,7 @@ function renderProfileButton() {
   const signedIn = !activeUser.guest;
   $("#profile-initials").textContent = signedIn ? initials(activeUser.name) : "Sign in";
   button.classList.toggle("signed-in", signedIn);
-  button.setAttribute("aria-label", signedIn ? `Account for ${activeUser.name}` : "Sign in or create an account");
+  button.setAttribute("aria-label", signedIn ? `${initials(activeUser.name)}, account for ${activeUser.name}` : "Sign in or create an account");
 }
 
 function setAccountNotice(html, tone = "") {
@@ -686,6 +700,8 @@ function openAccount(mode, notice) {
 
 function setActiveUser(user) {
   activeUser = user ? { ...user, guest: false } : { ...GUEST };
+  $$(".staff-only").forEach((el) => { el.hidden = !activeUser.can?.includes("update_status"); });
+  if (currentPage === "staff" && !activeUser.can?.includes("update_status")) navigateTo("home");
   renderProfileButton();
 }
 
@@ -921,10 +937,11 @@ function renderPhotoQueue() {
     : "Photos help crews find and size up the problem. Large photos are shrunk before upload.";
 }
 
-function openLightbox(issueId, index) {
-  const issue = issues.find((entry) => entry.id === issueId);
-  if (!issue?.photos?.length) return;
-  lightboxState = { photos: issue.photos, index, caption: issue.title };
+function openLightbox(issueId, index, set = "before") {
+  const issue = issues.find((entry) => entry.id === issueId) || staffItems.find((entry) => entry.id === issueId);
+  const photos = set === "after" ? issue?.afterPhotos : issue?.photos;
+  if (!photos?.length) return;
+  lightboxState = { photos, index, caption: set === "after" ? `${issue.title} (after)` : issue.title };
   showLightboxPhoto();
   openDialog("lightbox");
 }
@@ -1281,7 +1298,7 @@ async function searchPlaces(query) {
 document.addEventListener("click", (event) => {
   const target = event.target;
   const photo = target.closest("[data-photo-issue]");
-  if (photo) { event.stopPropagation(); return openLightbox(photo.dataset.photoIssue, Number(photo.dataset.photoIndex)); }
+  if (photo) { event.stopPropagation(); return openLightbox(photo.dataset.photoIssue, Number(photo.dataset.photoIndex), photo.dataset.photoSet || "before"); }
   const support = target.closest("[data-support]");
   if (support) { event.stopPropagation(); return handleSupport(support.dataset.support, support); }
   const nav = target.closest("[data-page-target]");
@@ -1295,6 +1312,8 @@ document.addEventListener("click", (event) => {
   }
   const close = target.closest("[data-close]");
   if (close) return closeDialog(close.dataset.close);
+  const followup = target.closest("[data-followup]");
+  if (followup) return openFollowup(followup.dataset.followup);
   const share = target.closest("[data-share]");
   if (share) { event.stopPropagation(); return shareIssue(share.dataset.share); }
   const flag = target.closest("[data-flag-issue]");
@@ -1979,3 +1998,217 @@ function updateRoleToolsVisibility() {
   $("#role-tools").hidden = !(activeUser.can?.includes("assign_roles") || $("#tracker-admin-token").value.trim());
 }
 $("#tracker-admin-token").addEventListener("input", updateRoleToolsVisibility);
+
+/* ---------- Who's likely responsible ---------- */
+async function fillResponsibility(issue) {
+  const guess = await guessResponsibility(issue);
+  const box = document.getElementById(`responsible-${issue.id}`);
+  if (!box || !guess) return;
+  box.innerHTML = `<p><strong>${escapeHtml(guess.who)}</strong> <span class="hint-inline">(best guess)</span></p><p class="hint">${escapeHtml(guess.why)}</p>${guess.links.length ? `<p class="responsible-links">${guess.links.map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join("")}</p>` : ""}`;
+}
+
+/* ---------- Fixed! celebration (once per report, per device) ---------- */
+function celebrateOnce(issue) {
+  const key = `sidewalk-celebrated-${issue.id}`;
+  try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch { return; }
+  if (!issue.userSupported && !issue.isSubscribed) return;
+  confetti();
+}
+
+function confetti() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const layer = document.createElement("div");
+  layer.className = "confetti";
+  layer.setAttribute("aria-hidden", "true");
+  const colors = ["#f2c230", "#d9532a", "#2f7a50", "#2f6fb3", "#ffffff"];
+  for (let i = 0; i < 70; i += 1) {
+    const piece = document.createElement("i");
+    piece.style.left = `${Math.random() * 100}%`;
+    piece.style.background = colors[i % colors.length];
+    piece.style.animationDelay = `${Math.random() * 0.4}s`;
+    piece.style.setProperty("--drift", `${(Math.random() - 0.5) * 160}px`);
+    piece.style.setProperty("--spin", `${360 + Math.random() * 540}deg`);
+    layer.append(piece);
+  }
+  document.body.append(layer);
+  setTimeout(() => layer.remove(), 2600);
+}
+
+/* ---------- Cony follow-ups ---------- */
+async function openFollowup(id) {
+  if (!requireAccount("Sign in so Cony can help you write a follow-up.", () => openFollowup(id))) return;
+  const issue = issues.find((entry) => entry.id === id);
+  $("#followup-subject").value = "";
+  $("#followup-body").value = "";
+  $("#followup-intro").textContent = "Cony is writing a short, polite follow-up…";
+  setCony("#cony-followup", "thinking");
+  openDialog("followup-modal");
+  try {
+    const { draft } = await api(`/api/issues/${encodeURIComponent(id)}/follow-up-draft`, { method: "POST" });
+    $("#followup-subject").value = draft.subject;
+    $("#followup-body").value = draft.body;
+    $("#followup-intro").textContent = `Here's a draft about "${issue?.title || "this report"}". Edit anything you like.`;
+    setCony("#cony-followup", "happy");
+    updateFollowupMail();
+  } catch (error) {
+    $("#followup-intro").textContent = error.message;
+    setCony("#cony-followup", "");
+  }
+}
+function updateFollowupMail() {
+  $("#followup-mail").href = `mailto:?subject=${encodeURIComponent($("#followup-subject").value)}&body=${encodeURIComponent($("#followup-body").value)}`;
+}
+["#followup-subject", "#followup-body"].forEach((sel) => $(sel).addEventListener("input", updateFollowupMail));
+$("#followup-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(`Subject: ${$("#followup-subject").value}\n\n${$("#followup-body").value}`);
+    showToast("Follow-up copied.");
+  } catch {
+    $("#followup-body").select();
+    showToast("Select the text and copy it.");
+  }
+});
+
+/* ---------- Staff dashboard ---------- */
+let staffItems = [];
+let staffMe = null;
+let staffFilter = "open";
+const ACTION_STAGES = ["submitted", "ai_reviewed", "community_priority"];
+
+async function loadStaffQueue() {
+  const list = $("#staff-list-main");
+  if (!activeUser.can?.includes("update_status")) return;
+  if (!staffItems.length) list.innerHTML = skeletons(3, "row", "li");
+  try {
+    const result = await api("/api/staff/queue");
+    staffItems = result.items;
+    staffMe = result.me;
+    renderStaff();
+  } catch (error) {
+    list.innerHTML = emptyState({ icon: "i-close", title: "Couldn't load the queue", text: error.message, error: true, tag: "li" });
+  }
+}
+
+function staffMatches(item, filter) {
+  const open = item.status !== "resolved";
+  if (filter === "open") return open;
+  if (filter === "action") return ACTION_STAGES.includes(item.status);
+  if (filter === "mine") return open && item.assignedTo && item.assignedTo === staffMe;
+  if (filter === "overdue") return item.stale;
+  if (filter === "fixed") return !open;
+  return true;
+}
+
+function renderStaff() {
+  ["open", "action", "mine", "overdue", "fixed"].forEach((f) => { $(`#sf-${f}`).textContent = staffItems.filter((item) => staffMatches(item, f)).length; });
+  $$("[data-staff-filter]").forEach((chip) => chip.classList.toggle("active", chip.dataset.staffFilter === staffFilter));
+  const rows = staffItems.filter((item) => staffMatches(item, staffFilter));
+  const empty = { open: "No open reports. Nice work.", action: "Nothing waiting for a first step.", mine: "You haven't taken any reports yet.", overdue: "Nothing has gone quiet for 3 weeks.", fixed: "No fixed reports yet." }[staffFilter];
+  $("#staff-list-main").innerHTML = rows.map((item) => {
+    const next = nextStageFor(item);
+    const mine = item.assignedTo && item.assignedTo === staffMe;
+    const who = item.assigneeName ? (mine ? "You" : escapeHtml(item.assigneeName)) : "Unassigned";
+    const fixAction = next === "resolved"
+      ? `<button class="btn btn-primary btn-small" type="button" data-staff-fix="${escapeHtml(item.id)}">Mark fixed</button>`
+      : next ? `<button class="btn btn-ghost btn-small" type="button" data-staff-next="${escapeHtml(item.id)}" data-next="${next}">Move to ${escapeHtml(STAGE_LABELS[next])}</button>` : "";
+    const assign = item.status === "resolved" ? "" : staffMe
+      ? `<button class="btn btn-ghost btn-small" type="button" data-staff-assign="${escapeHtml(item.id)}" data-take="${mine ? "" : "1"}">${mine ? "Unassign me" : "Assign to me"}</button>`
+      : "";
+    return `<li class="staff-row${item.stale ? " stale" : ""}">
+      <div class="staff-main">
+        <div class="staff-badges"><span class="badge ${item.status === "resolved" ? "resolved" : ""}">${escapeHtml(STAGE_LABELS[item.status] || STAGE_LABELS.submitted)}</span>${item.stale ? `<span class="badge priority">Quiet ${item.daysSinceUpdate} days</span>` : ""}${item.underReview ? `<span class="badge review">Under review</span>` : ""}</div>
+        <strong>${escapeHtml(item.title)}</strong>
+        <small>${escapeHtml(item.categoryLabel)} · ${escapeHtml(item.distance)} · ${item.supporters} backing · updated ${timeAgo(item.statusUpdatedAt)} · ${who}</small>
+      </div>
+      <div class="staff-actions">${assign}${fixAction}<button class="text-link small" type="button" data-staff-open="${escapeHtml(item.id)}">Open</button></div>
+    </li>`;
+  }).join("") || emptyState({ icon: "i-track", title: empty, tag: "li" });
+}
+
+$("#staff-filters").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-staff-filter]");
+  if (!chip) return;
+  staffFilter = chip.dataset.staffFilter;
+  renderStaff();
+});
+
+$("#staff-list-main").addEventListener("click", async (event) => {
+  const open = event.target.closest("[data-staff-open]");
+  if (open) {
+    currentTrackerIssue = open.dataset.staffOpen;
+    navigateTo("tracker");
+    return renderTracker();
+  }
+  const fix = event.target.closest("[data-staff-fix]");
+  if (fix) return openFix(fix.dataset.staffFix);
+  const assign = event.target.closest("[data-staff-assign]");
+  const nextBtn = event.target.closest("[data-staff-next]");
+  const button = assign || nextBtn;
+  if (!button) return;
+  setLoading(button, true);
+  try {
+    if (assign) {
+      await api(`/api/staff/issues/${encodeURIComponent(assign.dataset.staffAssign)}/assign`, { method: "POST", json: { assign: Boolean(assign.dataset.take) } });
+      showToast(assign.dataset.take ? "It's yours. It's in your Mine list." : "Unassigned.");
+    } else {
+      await api(`/api/issues/${encodeURIComponent(nextBtn.dataset.staffNext)}/status`, { method: "PATCH", json: { status: nextBtn.dataset.next, note: "" } });
+      showToast(`Moved to ${STAGE_LABELS[nextBtn.dataset.next]}. Followers will be notified.`);
+    }
+    await Promise.all([loadStaffQueue(), refreshState()]);
+  } catch (error) {
+    showToast(error.message);
+    setLoading(button, false);
+  }
+});
+
+/* ---------- Mark fixed (with after photos) ---------- */
+let fixIssueId = null;
+let fixPhotos = [];
+
+function openFix(id) {
+  fixIssueId = id;
+  fixPhotos = [];
+  $("#fix-form").reset();
+  $("#fix-error").textContent = "";
+  renderFixPreviews();
+  const item = staffItems.find((entry) => entry.id === id) || issues.find((entry) => entry.id === id);
+  $("#fix-intro").textContent = `"${item?.title || "This report"}": add a photo of the repair so neighbors can see the before and after. Everyone who backed it gets a "Fixed!" notification.`;
+  openDialog("fix-modal");
+}
+
+function renderFixPreviews() {
+  $("#fix-previews").innerHTML = fixPhotos.map((p, i) => `<div class="photo-thumb"><img src="${escapeHtml(p)}" alt="After photo ${i + 1}"><button class="icon-btn" type="button" data-fix-remove="${i}" aria-label="Remove photo ${i + 1}"><svg><use href="#i-close"/></svg></button></div>`).join("");
+}
+
+$("#fix-photos").addEventListener("change", async (event) => {
+  const files = [...event.target.files].slice(0, 4 - fixPhotos.length);
+  event.target.value = "";
+  for (const file of files) {
+    try { fixPhotos.push(await compressPhoto(file)); } catch { $("#fix-error").textContent = "One photo couldn't be read. Try a different one."; }
+  }
+  renderFixPreviews();
+});
+$("#fix-previews").addEventListener("click", (event) => {
+  const remove = event.target.closest("[data-fix-remove]");
+  if (!remove) return;
+  fixPhotos.splice(Number(remove.dataset.fixRemove), 1);
+  renderFixPreviews();
+});
+
+$("#fix-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("#fix-submit");
+  setLoading(button, true);
+  try {
+    if (fixPhotos.length) await api(`/api/issues/${encodeURIComponent(fixIssueId)}/after-photos`, { method: "POST", json: { photos: fixPhotos } });
+    await api(`/api/issues/${encodeURIComponent(fixIssueId)}/status`, { method: "PATCH", json: { status: "resolved", note: $("#fix-note").value } });
+    closeDialog("fix-modal");
+    confetti();
+    showToast("Marked fixed. Everyone who backed it will hear the good news.");
+    await Promise.all([loadStaffQueue(), refreshState()]);
+  } catch (error) {
+    $("#fix-error").textContent = error.message;
+  } finally {
+    setLoading(button, false);
+  }
+});

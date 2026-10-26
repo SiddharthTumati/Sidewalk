@@ -23,6 +23,7 @@
 		<link rel="stylesheet" href="style.css">
 		<script src="/vendor/leaflet/leaflet.js" defer></script>
 		<script src="/vendor/leaflet-heat/leaflet-heat.js" defer></script>
+		<script src="responsibility.js" defer></script>
 		<script src="app.js" defer></script>
 	</head>
 	<body>
@@ -71,6 +72,7 @@
 				<button class="nav-link" type="button" data-page-target="converter"><span class="cony-slot" aria-hidden="true"></span><span>Cony</span></button>
 				<button class="nav-link" type="button" data-page-target="petitions"><svg><use href="#i-hand"/></svg><span>Petitions</span></button>
 				<button class="nav-link" type="button" data-page-target="heatmap"><svg><use href="#i-heat"/></svg><span>Heatmap</span></button>
+				<button class="nav-link staff-only" type="button" data-page-target="staff" hidden><svg><use href="#i-track"/></svg><span>Staff</span></button>
 			</nav>
 			<div class="topbar-right">
 				<button class="area-button" id="area-button" type="button">
@@ -305,6 +307,21 @@
 				</aside>
 			</div>
 		</section>
+
+		<section class="page-view tool-page" id="staff-page" data-page-section="staff" hidden>
+			<header class="page-head">
+				<h1 class="display-sm">Staff dashboard</h1>
+				<p>Every open report, oldest update first. Take what you're working on, move it forward, and close it out with an after photo.</p>
+			</header>
+			<div class="filter-tabs staff-filters" id="staff-filters" role="group" aria-label="Filter reports">
+				<button class="chip active" type="button" data-staff-filter="open">Open <span id="sf-open">0</span></button>
+				<button class="chip" type="button" data-staff-filter="action">Needs action <span id="sf-action">0</span></button>
+				<button class="chip" type="button" data-staff-filter="mine">Mine <span id="sf-mine">0</span></button>
+				<button class="chip" type="button" data-staff-filter="overdue">Quiet 3+ weeks <span id="sf-overdue">0</span></button>
+				<button class="chip" type="button" data-staff-filter="fixed">Fixed <span id="sf-fixed">0</span></button>
+			</div>
+			<ul class="staff-list" id="staff-list-main" aria-live="polite"></ul>
+		</section>
 		</main>
 
 		<nav class="tabbar" aria-label="Main">
@@ -445,6 +462,7 @@
 					<div class="button-row">
 						<button class="btn btn-ghost" id="save-email-preferences" type="button">Save</button>
 						<button class="btn btn-danger-ghost" id="sign-out-button" type="button">Sign out</button>
+						<button class="btn btn-ghost staff-only" id="open-staff" type="button" data-page-target="staff" hidden>Open staff dashboard</button>
 					</div>
 					<div class="data-tools">
 						<h3 class="mod-head">Your data</h3>
@@ -492,6 +510,42 @@
 		</dialog>
 
 		<!-- Goal reached -->
+		<dialog class="sheet sheet-narrow" id="fix-modal" aria-labelledby="fix-title">
+			<form class="sheet-body" id="fix-form" novalidate>
+				<div class="sheet-head">
+					<h2 id="fix-title">Mark as fixed</h2>
+					<button class="icon-btn" type="button" data-close="fix-modal" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+				</div>
+				<p class="sheet-intro" id="fix-intro">Add a photo of the repair so neighbors can see the before and after. Everyone who backed it gets a "Fixed!" notification.</p>
+				<label class="photo-add" for="fix-photos"><svg aria-hidden="true"><use href="#i-camera"/></svg><span>Add after photos</span></label>
+				<input class="sr-only" id="fix-photos" type="file" accept="image/*" multiple>
+				<div class="fix-previews" id="fix-previews"></div>
+				<label class="field-label" for="fix-note">Note <span class="optional">Optional</span></label>
+				<input id="fix-note" maxlength="240" placeholder="Patched and sealed on Tuesday">
+				<p class="form-error" id="fix-error" role="alert"></p>
+				<button class="btn btn-primary btn-block" id="fix-submit" type="submit">Mark fixed</button>
+			</form>
+		</dialog>
+
+		<dialog class="sheet sheet-narrow" id="followup-modal" aria-labelledby="followup-title">
+			<div class="sheet-body">
+				<div class="sheet-head">
+					<h2 id="followup-title">Follow up with the city</h2>
+					<button class="icon-btn" type="button" data-close="followup-modal" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+				</div>
+				<div class="cony-hero small"><span class="cony-slot cony-lg" id="cony-followup" aria-hidden="true"></span><p class="sheet-intro" id="followup-intro">Cony is writing a short, polite follow-up…</p></div>
+				<label class="field-label" for="followup-subject">Subject</label>
+				<input id="followup-subject" maxlength="200">
+				<label class="field-label" for="followup-body">Message</label>
+				<textarea id="followup-body" rows="9" maxlength="2000"></textarea>
+				<p class="hint">Check the details and add your name. Cony never adds contacts; send it to the office that handles this report.</p>
+				<div class="button-row tight">
+					<button class="btn btn-ghost" id="followup-copy" type="button">Copy</button>
+					<a class="btn btn-primary" id="followup-mail" href="#">Open in my email app</a>
+				</div>
+			</div>
+		</dialog>
+
 		<dialog class="sheet sheet-narrow" id="flag-modal" aria-labelledby="flag-title">
 			<form class="sheet-body" id="flag-form" novalidate>
 				<div class="sheet-head">

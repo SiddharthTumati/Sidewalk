@@ -31,7 +31,8 @@ Small infrastructure problems are easy to notice and hard to get fixed. A pothol
 | **Map** | Leaflet + OpenStreetMap, category filters, place search (Nominatim), color-coded pins by support level |
 | **Reports** | Up to 4 photos (camera, picker, drag-and-drop, or paste), compressed on the device before upload, full-screen photo viewer |
 | **Petitions** | One endorsement per verified account; thresholds at 10 (priority) and 50 (council-ready); milestone emails |
-| **Tracker** | Six-stage status timeline per issue; coordinator tools to advance status (protected by an admin token) |
+| **Tracker** | Six-stage status timeline per issue; before-and-after photos when a fix is done, a "Fixed!" banner, and a best guess at who maintains the spot (city or state DOT) with links to official report forms |
+| **Close the loop** | Staff dashboard (open, needs action, mine, quiet 3+ weeks, fixed) with assign-to-me and one-tap next steps; "Mark fixed" with an after photo notifies everyone who backed the report; reports quiet for 3 weeks nudge followers, and Cony drafts a polite follow-up; printable council packet with a QR code, map, photos, and timeline |
 | **Cony (AI helper)** | Animated traffic-cone mascot that thinks, talks, and hops; chat replies stream in word by word as they're written, formal-request drafter with suggested urgency, and an automatic first review of every new report |
 | **Accounts** | Email verification, resend link, forgot/reset password, 8-character minimum, unsubscribe links in every email |
 | **Anti-abuse** | Cloudflare Turnstile bot check, throwaway-email blocking, rate limits and daily AI caps, endorsements that only count once an account is a day old, burst detection for fake accounts on one network, duplicate-report detection, link and profanity filter |
@@ -111,6 +112,8 @@ abuse.js         Bot check, throwaway-email blocking, text filter, network finge
 photometa.js     Removes hidden metadata from uploaded photos
 jobs.js          Background jobs (notifications, threshold checks, cleanup)
 notify.js        Email and phone notifications from one place
+public/packet.*  Printable council packet (/packet/:id)
+public/responsibility.js   Best guess at who maintains a spot, from OpenStreetMap road data
 public/privacy.html, terms.html, ai.html, guidelines.html   Policy pages
 docs/screenshots Images used in this README
 ```
@@ -132,7 +135,6 @@ Cony helps people *write* and *understand*. It doesn't decide anything. It never
 ## What's next
 
 - Send council-ready reports straight to city 311 systems where an open API exists
-- Let city staff log in to update status themselves
 - Spanish-language interface
 - Neighborhood-level stats on how long fixes take
 

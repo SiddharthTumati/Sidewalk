@@ -8,6 +8,7 @@ const { limit, takeAiCredit, adminLocked, recordAdminFailure, clearAdminFailures
 const { stripPhotoMetadata } = require('./photometa');
 const { createJobs } = require('./jobs');
 const { createNotifier } = require('./notify');
+const QRCode = require('qrcode');
 const { requireHuman, turnstileSiteKey, isThrowawayEmail, checkPublicText, setNetworkKey, networkId } = require('./abuse');
 
 const router = express.Router();
@@ -157,6 +158,14 @@ const CAPABILITIES = {
   assign_roles: ['admin'],
 };
 if (!userColumns.has('role')) db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'resident'");
+// Closing the loop: who's handling a report, after photos, and follow-up reminders.
+if (!issueColumns.has('assigned_to')) db.exec('ALTER TABLE issues ADD COLUMN assigned_to TEXT REFERENCES users(id) ON DELETE SET NULL');
+if (!issueColumns.has('followup_notified_at')) db.exec('ALTER TABLE issues ADD COLUMN followup_notified_at INTEGER');
+const photoColumns = new Set(db.prepare('PRAGMA table_info(issue_photos)').all().map((column) => column.name));
+if (!photoColumns.has('kind')) db.exec("ALTER TABLE issue_photos ADD COLUMN kind TEXT NOT NULL DEFAULT 'before'");
+// A report sent to the city with no update for this long is "stale": followers get a nudge.
+const STALE_MS = 21 * 24 * 60 * 60 * 1000;
+const STALE_STAGES = ['sent_to_agency', 'in_progress'];
 db.exec(`
   CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -374,11 +383,15 @@ const STATUS_WORDS = { ai_reviewed: 'reviewed for clarity', community_priority: 
 
 function notifyStatusChange(issue, status, note) {
   const followers = db.prepare('SELECT user_id FROM issue_subscriptions WHERE issue_id = ?').all(issue.id).map((row) => row.user_id);
+  // Everyone who backed it hears when it's fixed, not just followers.
+  const backers = status === 'resolved' ? db.prepare('SELECT user_id FROM supports WHERE issue_id = ?').all(issue.id).map((row) => row.user_id) : [];
   const words = STATUS_WORDS[status] || status.replaceAll('_', ' ');
   notifier.notify({
-    userIds: [issue.created_by, ...followers],
-    subject: `Sidewalk update: ${issue.title}`,
-    text: `An issue you follow is now ${words}.\n\n${issue.title}\n${issue.distance}\n${note}`,
+    userIds: [issue.created_by, ...followers, ...backers],
+    subject: status === 'resolved' ? `Fixed: ${issue.title}` : `Sidewalk update: ${issue.title}`,
+    text: status === 'resolved'
+      ? `Good news: an issue you supported has been fixed.\n\n${issue.title}\n${issue.distance}\n${note}\n\nThanks for speaking up.`
+      : `An issue you follow is now ${words}.\n\n${issue.title}\n${issue.distance}\n${note}`,
     title: status === 'resolved' ? 'Fixed!' : `Now ${words}`,
     body: issue.title,
     path: `/r/${issue.id}`,
@@ -388,7 +401,7 @@ function notifyStatusChange(issue, status, note) {
 async function transitionIssue(issue, status, note) {
   const now = Date.now();
   const cleanNote = typeof note === 'string' && note.trim() ? note.trim().slice(0, 240) : `Status updated to ${status.replaceAll('_', ' ')}.`;
-  db.prepare('UPDATE issues SET status = ?, status_updated_at = ? WHERE id = ?').run(status, now, issue.id);
+  db.prepare('UPDATE issues SET status = ?, status_updated_at = ?, followup_notified_at = NULL WHERE id = ?').run(status, now, issue.id);
   db.prepare('INSERT INTO issue_events (issue_id, status, note, created_at) VALUES (?, ?, ?, ?)')
     .run(issue.id, status, cleanNote, now);
   notifyStatusChange(issue, status, cleanNote);
@@ -486,6 +499,27 @@ jobs.every('thresholds', 10 * 60 * 1000, async () => {
   }
 });
 
+// Reports sent to the city with no update in 3 weeks: nudge followers once per quiet stretch.
+jobs.every('stale-followups', 6 * 60 * 60 * 1000, () => checkStaleReports());
+function checkStaleReports() {
+  const rows = db.prepare(`SELECT * FROM issues WHERE hidden_at IS NULL AND status IN ('sent_to_agency', 'in_progress')
+    AND COALESCE(status_updated_at, created_at) < ? AND followup_notified_at IS NULL`).all(Date.now() - STALE_MS);
+  for (const row of rows) {
+    const followers = db.prepare('SELECT user_id FROM issue_subscriptions WHERE issue_id = ?').all(row.id).map((r) => r.user_id);
+    const days = Math.floor((Date.now() - (row.status_updated_at || row.created_at)) / 86400000);
+    notifier.notify({
+      userIds: [row.created_by, ...followers],
+      subject: `No update in ${days} days: ${row.title}`,
+      text: `It's been ${days} days since the last update on a report you follow.\n\n${row.title}\n${row.distance}\n\nCony can help you write a short, polite follow-up to the city. Open the report and tap "Draft a follow-up".`,
+      title: `No update in ${days} days`,
+      body: `${row.title}: Cony can help you follow up.`,
+      path: `/r/${row.id}`,
+    });
+    db.prepare('UPDATE issues SET followup_notified_at = ? WHERE id = ?').run(Date.now(), row.id);
+  }
+  return rows.length;
+}
+
 // Hourly housekeeping: expired sign-ins and old one-time email links.
 jobs.every('cleanup', 60 * 60 * 1000, () => {
   db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now());
@@ -534,8 +568,12 @@ function serializeIssue(row, userId) {
     distance: row.distance,
     lat: row.lat,
     lng: row.lng,
-    photos: db.prepare('SELECT id FROM issue_photos WHERE issue_id = ? ORDER BY position ASC, created_at ASC').all(row.id)
+    photos: db.prepare("SELECT id FROM issue_photos WHERE issue_id = ? AND kind = 'before' ORDER BY position ASC, created_at ASC").all(row.id)
       .map((photo) => `/api/photos/${photo.id}`),
+    afterPhotos: db.prepare("SELECT id FROM issue_photos WHERE issue_id = ? AND kind = 'after' ORDER BY position ASC, created_at ASC").all(row.id)
+      .map((photo) => `/api/photos/${photo.id}`),
+    stale: STALE_STAGES.includes(row.status) && Date.now() - (row.status_updated_at || row.created_at) > STALE_MS,
+    daysSinceUpdate: Math.floor((Date.now() - (row.status_updated_at || row.created_at)) / 86400000),
     createdAt: row.created_at,
     userSupported,
     isSubscribed,
@@ -742,7 +780,7 @@ router.get('/auth/export', requireVerifiedUser, limit({ name: 'export', max: 10,
     status: row.status,
     hidden: Boolean(row.hidden_at),
     postedAt: iso(row.created_at),
-    photos: db.prepare('SELECT id FROM issue_photos WHERE issue_id = ? ORDER BY position').all(row.id).map((photo) => `${appUrl()}/api/photos/${photo.id}`),
+    photos: db.prepare('SELECT id, kind FROM issue_photos WHERE issue_id = ? ORDER BY kind, position').all(row.id).map((photo) => ({ kind: photo.kind, url: `${appUrl()}/api/photos/${photo.id}` })),
   }));
   const titled = (sql) => db.prepare(sql).all(user.id).map((row) => ({ ...row, at: iso(row.at) }));
   const data = {
@@ -976,6 +1014,79 @@ router.post('/issues/:id/support', requireVerifiedUser, limit({ name: 'endorse',
   res.json({ count, pending, pendingSupporters: supportCounts(issue.id).pending, underReview, goalReached, priorityReached });
 });
 
+// ---------- Closing the loop ----------
+// Staff add "after" photos when a report is fixed (up to 4).
+router.post('/issues/:id/after-photos', requireCan('update_status'), limit({ name: 'after-photos', max: 30, windowMs: 60 * 60 * 1000, by: 'ip+user' }), (req, res) => {
+  const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  if (!issue) return res.status(404).json({ error: 'Issue not found.' });
+  const raw = Array.isArray(req.body?.photos) ? req.body.photos : [];
+  const existing = db.prepare("SELECT COUNT(*) AS n FROM issue_photos WHERE issue_id = ? AND kind = 'after'").get(issue.id).n;
+  if (!raw.length) return res.status(400).json({ error: 'Add at least one photo.' });
+  if (existing + raw.length > MAX_PHOTOS) return res.status(400).json({ error: `A report can have up to ${MAX_PHOTOS} after photos.` });
+  let photos;
+  try { photos = raw.map(decodePhoto); } catch (error) { return res.status(400).json({ error: error.message }); }
+  const now = Date.now();
+  photos.forEach(({ mime, data }, i) => db.prepare("INSERT INTO issue_photos (id, issue_id, mime, data, position, created_at, kind) VALUES (?, ?, ?, ?, ?, ?, 'after')")
+    .run(crypto.randomUUID(), issue.id, mime, data, existing + i, now));
+  logActivity(req, 'after-photos', issue.id, `${photos.length} photo(s)`);
+  res.status(201).json({ issue: serializeIssue(db.prepare('SELECT * FROM issues WHERE id = ?').get(issue.id), req.user?.id) });
+});
+
+// The staff work queue: every visible report with who's on it and how long it's been quiet.
+router.get('/staff/queue', requireCan('update_status'), (req, res) => {
+  const rows = db.prepare(`SELECT issues.*, assignee.name AS assignee_name FROM issues
+    LEFT JOIN users AS assignee ON assignee.id = issues.assigned_to
+    LEFT JOIN users AS reporter ON reporter.id = issues.created_by
+    WHERE issues.hidden_at IS NULL AND reporter.suspended_at IS NULL
+    ORDER BY COALESCE(issues.status_updated_at, issues.created_at) ASC`).all();
+  res.json({
+    me: req.user ? req.user.id : null,
+    items: rows.map((row) => ({ ...serializeIssue(row, req.user?.id), assignedTo: row.assigned_to, assigneeName: row.assignee_name })),
+  });
+});
+
+router.post('/staff/issues/:id/assign', requireCan('update_status'), (req, res) => {
+  const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  if (!issue) return res.status(404).json({ error: 'Issue not found.' });
+  const take = req.body?.assign === true;
+  if (take && !req.user) return res.status(400).json({ error: 'Sign in with your staff account to take a report.' });
+  db.prepare('UPDATE issues SET assigned_to = ? WHERE id = ?').run(take ? req.user.id : null, issue.id);
+  logActivity(req, take ? 'assign' : 'unassign', issue.id);
+  res.json({ assignedTo: take ? req.user.id : null, assigneeName: take ? req.user.name : null });
+});
+
+// Cony drafts a polite follow-up to the city for a report that's gone quiet.
+router.post('/issues/:id/follow-up-draft', requireVerifiedUser, limit({ name: 'followup-draft', max: 10, windowMs: 60 * 60 * 1000, by: 'ip+user' }), async (req, res) => {
+  const ai = req.app.locals.ai;
+  if (!ai) return res.status(503).json({ error: 'Cony isn’t available on this server right now.' });
+  const issue = db.prepare('SELECT * FROM issues WHERE id = ? AND hidden_at IS NULL').get(req.params.id);
+  if (!issue) return res.status(404).json({ error: 'Issue not found.' });
+  const capMessage = takeAiCredit(`u${req.user.id}`);
+  if (capMessage) return res.status(429).json({ error: capMessage });
+  const events = db.prepare('SELECT status, note, created_at FROM issue_events WHERE issue_id = ? ORDER BY created_at').all(issue.id)
+    .map((e) => `${new Date(e.created_at).toDateString()}: ${STATUS_WORDS[e.status] || e.status}. ${e.note}`).join('\n');
+  try {
+    const draft = await ai.generateJson({
+      system: 'You are Cony, Sidewalk\'s helper. Write a short, polite follow-up email from a resident to their local public works department about an infrastructure report that has not had an update in a while. Thank them, restate the problem and location in one sentence, mention when it was reported or sent, and ask for a status update and an expected timeline. Never invent names, phone numbers, email addresses, work order numbers, laws, or deadlines; only use facts given. Plain text, under 150 words, no Markdown. Sign it "A resident" so the person can add their name.',
+      schema: { type: 'object', properties: { subject: { type: 'string' }, body: { type: 'string' } }, required: ['subject', 'body'] },
+      prompt: `Report: ${issue.title}\nLocation: ${issue.distance}\nDescription: ${issue.description}\nNeighbors backing it: ${endorsementTotal(issue)}\nTimeline:\n${events}\nDays since last update: ${Math.floor((Date.now() - (issue.status_updated_at || issue.created_at)) / 86400000)}`,
+    });
+    if (!draft.subject || !draft.body) return res.status(502).json({ error: 'Cony couldn’t finish the draft. Please try again.' });
+    res.json({ draft: { subject: String(draft.subject).slice(0, 200), body: String(draft.body).slice(0, 2000) } });
+  } catch (error) {
+    console.error('Follow-up draft failed:', error.message);
+    res.status(502).json({ error: 'Cony couldn’t write a draft right now. Please try again shortly.' });
+  }
+});
+
+// A QR code for the printed council packet: scan it to open and back the report.
+router.get('/issues/:id/qr.svg', async (req, res) => {
+  const issue = db.prepare('SELECT id FROM issues WHERE id = ? AND hidden_at IS NULL').get(req.params.id);
+  if (!issue) return res.status(404).json({ error: 'Issue not found.' });
+  const svg = await QRCode.toString(`${appUrl()}/r/${issue.id}`, { type: 'svg', margin: 1, color: { dark: '#23272b', light: '#ffffff' } });
+  res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(svg);
+});
+
 // ---------- Community flags ----------
 const FLAG_REASONS = {
   spam: 'Spam or advertising',
@@ -1140,6 +1251,7 @@ router.delete('/push/subscribe', requireVerifiedUser, (req, res) => {
 
 // ---------- Share previews ----------
 // What a shared link (/r/<id>) shows in a text message or social post.
+router.checkStaleReports = () => checkStaleReports();
 router.sharePreview = (id) => {
   const row = db.prepare(`SELECT issues.* FROM issues LEFT JOIN users ON users.id = issues.created_by
     WHERE issues.id = ? AND issues.hidden_at IS NULL AND users.suspended_at IS NULL`).get(String(id));
