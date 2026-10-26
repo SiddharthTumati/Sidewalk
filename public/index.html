@@ -38,6 +38,7 @@
 			<symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 4 9 4.5-9 4.5-9-4.5L12 4Zm-9 8 9 4.5 9-4.5M3 15.5 12 20l9-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
 			<symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2.5h7L17 8h3v11H4V8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
 			<symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+			<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
 			<symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
 			<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
 			<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
@@ -358,6 +359,20 @@
 						<p class="hint photo-hint" id="photo-hint">Photos help crews find and size up the problem. Large photos are shrunk before upload.</p>
 					</div>
 				</fieldset>
+
+				<section class="cony-assist" id="cony-assist" aria-labelledby="cony-assist-title">
+					<span class="cony-slot cony-sm" id="cony-assist-face" aria-hidden="true"></span>
+					<div class="cony-assist-body">
+						<strong id="cony-assist-title">Let Cony fill this in</strong>
+						<p class="hint" id="cony-assist-status" role="status">Add a photo, say what's wrong, or type it in any language. Cony writes it up in English for you to check.</p>
+						<div class="cony-assist-actions">
+							<button class="btn btn-ghost btn-small" id="cony-from-photo" type="button" disabled><svg aria-hidden="true"><use href="#i-camera"/></svg>Read my photo</button>
+							<button class="btn btn-ghost btn-small" id="cony-voice" type="button" aria-pressed="false"><svg aria-hidden="true"><use href="#i-mic"/></svg><span id="cony-voice-label">Say it</span></button>
+							<button class="btn btn-ghost btn-small" id="cony-tidy" type="button"><svg aria-hidden="true"><use href="#i-spark"/></svg>Tidy up and translate</button>
+							<button class="text-link small" id="cony-undo" type="button" hidden>Undo</button>
+						</div>
+					</div>
+				</section>
 
 				<label class="field-label" for="issue-title">Short title</label>
 				<input id="issue-title" name="title" maxlength="70" placeholder="Crosswalk paint has worn away" required>

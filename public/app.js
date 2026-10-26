@@ -384,14 +384,15 @@ function renderTrackerDetail(issue) {
   const gallery = issue.afterPhotos?.length
     ? `<div class="before-after"><figure><figcaption>Before</figcaption><div class="gallery">${beforeButtons || `<p class="hint">No before photo</p>`}</div></figure><figure><figcaption>After</figcaption><div class="gallery">${afterButtons}</div></figure></div>`
     : beforeButtons ? `<div class="gallery">${beforeButtons}</div>` : "";
-  const fixedBanner = fixed ? `<div class="fixed-banner"><span class="cony-slot cony-lg happy" aria-hidden="true">${conySvg()}</span><div><strong>Fixed!</strong><span>${issue.supporters > 1 ? `Thanks to the ${issue.supporters} neighbors who spoke up.` : "Thanks to everyone who spoke up."}</span></div></div>` : "";
-  const staleNote = issue.stale ? `<div class="notice warn stale-note"><p><strong>No update in ${issue.daysSinceUpdate} days.</strong> A polite follow-up often gets things moving.</p><button class="btn btn-ghost btn-small" type="button" data-followup="${escapeHtml(issue.id)}"><span class="cony-slot" aria-hidden="true">${conySvg()}</span>Draft a follow-up with Cony</button></div>` : "";
+  const fixedBanner = fixed ? `<div class="fixed-banner"><span class="cony-slot cony-lg happy mood-party" aria-hidden="true">${conySvg()}</span><div><strong>Fixed!</strong><span>${issue.supporters > 1 ? `Thanks to the ${issue.supporters} neighbors who spoke up.` : "Thanks to everyone who spoke up."}</span></div></div>` : "";
+  const staleNote = issue.stale ? `<div class="notice warn stale-note"><p><strong>No update in ${issue.daysSinceUpdate} days.</strong> A polite follow-up often gets things moving.</p><button class="btn btn-ghost btn-small" type="button" data-followup="${escapeHtml(issue.id)}"><span class="cony-slot mood-sad" aria-hidden="true">${conySvg()}</span>Draft a follow-up with Cony</button></div>` : "";
   detail.innerHTML = `${fixedBanner}<div class="detail-top"><span><i class="cat-dot cat-${escapeHtml(issue.category)}"></i> ${escapeHtml(issue.categoryLabel)}, ${escapeHtml(issue.distance)}</span><span>${timeAgo(issue.createdAt)}</span></div>
     <h3>${escapeHtml(issue.title)}</h3>
     <p class="detail-desc">${escapeHtml(issue.description)}</p>
     ${gallery}
     <ol class="timeline" aria-label="Progress">${steps}</ol>
     ${staleNote}
+    ${!issue.stale && issue.status === "in_progress" ? `<p class="mood-line"><span class="cony-slot cony-sm mood-working" aria-hidden="true">${conySvg()}</span>Crews are on it. Cony will cheer when it's fixed.</p>` : ""}
     <div class="responsible" id="responsible-${escapeHtml(issue.id)}"></div>
     ${issue.underReview ? `<p class="notice warn">Under review: a coordinator is checking this report's endorsements before it can move forward.</p>` : ""}
     <div class="button-row tight detail-actions">
@@ -932,6 +933,7 @@ function renderPhotoQueue() {
       <button type="button" data-remove-photo="${entry.id}" aria-label="Remove photo ${index + 1}"><svg><use href="#i-close"/></svg></button>
     </div>`).join("");
   $("#photo-actions").hidden = photoQueue.length >= MAX_PHOTOS;
+  updateConyPhotoButton();
   $("#photo-hint").textContent = photoQueue.length
     ? `${photoQueue.length} of ${MAX_PHOTOS} photos added.`
     : "Photos help crews find and size up the problem. Large photos are shrunk before upload.";
@@ -994,6 +996,7 @@ function openReport(prefill) {
     ? "Anyone can report. Sign in if you want to endorse issues and get updates."
     : `Posting as ${activeUser.name}. You'll follow this report automatically.`;
   hideDuplicate();
+  resetConyAssist();
   prepareTurnstile("report-turnstile", activeUser.guest);
   openDialog("report-modal");
 }
@@ -1758,7 +1761,10 @@ function conySvg() {
       <circle cx="20.6" cy="44.2" r="2.1" fill="#ff9f7f"/><circle cx="43.4" cy="44.2" r="2.1" fill="#ff9f7f"/>
       <path class="cony-smile" d="M28.4 44.6Q32 48.4 35.6 44.6" fill="none" stroke="#23272b" stroke-width="2.1" stroke-linecap="round"/>
       <ellipse class="cony-talk" cx="32" cy="46" rx="2.6" ry="2.2" fill="#23272b"/>
+      <path class="cony-frown" d="M28.4 47.4Q32 43.8 35.6 47.4" fill="none" stroke="#23272b" stroke-width="2.1" stroke-linecap="round"/>
+      <g class="cony-hat"><path d="M23 10.5Q23 1.5 32 1.5T41 10.5Z" fill="#f2c230" stroke="#23272b" stroke-width="2" stroke-linejoin="round"/><path d="M32 1.8V10" stroke="#23272b" stroke-width="1.6"/><rect x="18.5" y="9.6" width="27" height="3.6" rx="1.8" fill="#f2c230" stroke="#23272b" stroke-width="2"/></g>
     </g>
+    <g class="cony-party" stroke-width="2.4" stroke-linecap="round"><path d="M6 14l3 2.5" stroke="#2f6fb3"/><path d="M58 14l-3 2.5" stroke="#2f7a50"/><path d="M10 5l1.5 3.5" stroke="#d9532a"/><path d="M54 5l-1.5 3.5" stroke="#f2c230"/><circle cx="4" cy="25" r="1.6" fill="#f2c230" stroke="none"/><circle cx="60" cy="25" r="1.6" fill="#d9532a" stroke="none"/></g>
   </svg>`;
 }
 
@@ -2212,3 +2218,160 @@ $("#fix-form").addEventListener("submit", async (event) => {
     setLoading(button, false);
   }
 });
+
+/* ---------- Cony fills in the report: photo, voice, or rough text in any language ---------- */
+var conyUndo = null;
+var voice = null;
+
+function conyStatus(text, state = "") {
+  $("#cony-assist-status").textContent = text;
+  setCony("#cony-assist-face", state);
+}
+
+function conyBusy(busy) {
+  ["#cony-from-photo", "#cony-tidy"].forEach((sel) => { $(sel).disabled = busy || (sel === "#cony-from-photo" && !firstReadyPhoto()); });
+  if (!voice) $("#cony-voice").disabled = busy;
+}
+
+function firstReadyPhoto() {
+  return photoQueue.find((entry) => entry.status === "ready" && entry.dataUrl);
+}
+
+function updateConyPhotoButton() {
+  $("#cony-from-photo").disabled = !firstReadyPhoto() || $("#cony-assist").classList.contains("busy");
+}
+
+function applyConyReport(report, note) {
+  conyUndo = { title: $("#issue-title").value, description: $("#issue-description").value, category: $("#category-choices input:checked")?.value };
+  $("#issue-title").value = report.title;
+  $("#issue-description").value = report.description;
+  $("#description-count").textContent = report.description.length;
+  const radio = $(`#category-choices input[value="${report.category}"]`);
+  if (radio) radio.checked = true;
+  $("#cony-undo").hidden = false;
+  conyStatus(note, "happy");
+}
+
+$("#cony-undo").addEventListener("click", () => {
+  if (!conyUndo) return;
+  $("#issue-title").value = conyUndo.title;
+  $("#issue-description").value = conyUndo.description;
+  $("#description-count").textContent = conyUndo.description.length;
+  const radio = $(`#category-choices input[value="${conyUndo.category}"]`);
+  if (radio) radio.checked = true;
+  conyUndo = null;
+  $("#cony-undo").hidden = true;
+  conyStatus("Put back what you had.");
+});
+
+async function conyTask(label, work) {
+  $("#cony-assist").classList.add("busy");
+  conyBusy(true);
+  conyStatus(label, "thinking");
+  try {
+    await work();
+  } catch (error) {
+    conyStatus(error.message || "Cony couldn't do that just now. You can fill in the form yourself.");
+  } finally {
+    $("#cony-assist").classList.remove("busy");
+    conyBusy(false);
+  }
+}
+
+// A smaller copy is plenty for Cony to read, and keeps the request quick.
+async function shrinkForCony(dataUrl) {
+  const image = new Image();
+  image.src = dataUrl;
+  await image.decode();
+  const scale = Math.min(1, 1024 / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(image.naturalWidth * scale);
+  canvas.height = Math.round(image.naturalHeight * scale);
+  canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.78);
+}
+
+$("#cony-from-photo").addEventListener("click", () => conyTask("Cony is looking at your photo…", async () => {
+  const photo = await shrinkForCony(firstReadyPhoto().dataUrl);
+  const result = await api("/api/cony/photo", { method: "POST", json: { photo } });
+  if (!result.isStreetIssue) return conyStatus("Cony couldn't spot a street or park problem in that photo. Try a closer shot of the problem, or describe it instead.");
+  applyConyReport(result, result.privacyConcern
+    ? "Filled in from your photo. Heads up: Cony sees a face or license plate. Please retake or crop it before posting."
+    : "Filled in from your photo. Check it over and fix anything Cony got wrong.");
+}));
+
+$("#cony-tidy").addEventListener("click", () => {
+  const text = [$("#issue-title").value, $("#issue-description").value].filter((v) => v.trim()).join(". ");
+  if (text.trim().length < 5) {
+    conyStatus("Type a few words about the problem first, in any language. Then tap Tidy up.");
+    return $("#issue-description").focus();
+  }
+  conyTask("Cony is tidying it up…", async () => tidyInto(text));
+});
+
+async function tidyInto(text, heard = "") {
+  const result = await api("/api/cony/tidy", { method: "POST", json: { text } });
+  const translated = result.language && !/^english$/i.test(result.language);
+  const prefix = heard ? `Heard: "${heard.length > 90 ? `${heard.slice(0, 90)}…` : heard}". ` : "";
+  applyConyReport(result, `${prefix}${translated ? `Translated from ${result.language}. ` : ""}Check it over and fix anything Cony got wrong.`);
+}
+
+// Voice: tap to start, tap again to stop (stops by itself after 60 seconds).
+function pickAudioType() {
+  if (!window.MediaRecorder) return null;
+  return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
+}
+
+$("#cony-voice").addEventListener("click", async () => {
+  if (voice) return voice.recorder.stop();
+  const type = pickAudioType();
+  if (type === null || !navigator.mediaDevices?.getUserMedia) return conyStatus("This browser can't record audio. Type it instead, in any language.");
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    return conyStatus("Cony needs microphone permission to listen. You can allow it in your browser settings, or type instead.");
+  }
+  const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+  const chunks = [];
+  const started = Date.now();
+  voice = { recorder, stream };
+  recorder.addEventListener("dataavailable", (event) => { if (event.data.size) chunks.push(event.data); });
+  recorder.addEventListener("stop", () => {
+    clearInterval(voice.timer);
+    clearTimeout(voice.limit);
+    stream.getTracks().forEach((track) => track.stop());
+    voice = null;
+    $("#cony-voice").setAttribute("aria-pressed", "false");
+    $("#cony-voice").classList.remove("recording");
+    $("#cony-voice-label").textContent = "Say it";
+    const blob = new Blob(chunks, { type: recorder.mimeType || type || "audio/webm" });
+    if (Date.now() - started < 800 || blob.size < 1000) return conyStatus("That was too short. Tap Say it, talk, then tap Stop.");
+    conyTask("Cony is listening back…", async () => {
+      const response = await fetch("/api/cony/transcribe", { method: "POST", headers: { "Content-Type": blob.type.split(";")[0] }, body: blob, credentials: "same-origin" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Cony couldn't hear that. Try again.");
+      conyStatus("Got it. Writing it up…", "thinking");
+      await tidyInto(data.text, data.text);
+    });
+  });
+  recorder.start();
+  $("#cony-voice").setAttribute("aria-pressed", "true");
+  $("#cony-voice").classList.add("recording");
+  const tick = () => {
+    const secs = Math.floor((Date.now() - started) / 1000);
+    $("#cony-voice-label").textContent = `Stop (0:${String(secs).padStart(2, "0")})`;
+  };
+  tick();
+  voice.timer = setInterval(tick, 500);
+  voice.limit = setTimeout(() => recorder.state === "recording" && recorder.stop(), 60_000);
+  conyStatus("Listening… say what's wrong and where. Any language is fine. Tap Stop when you're done.", "talking");
+});
+
+function resetConyAssist() {
+  if (voice) voice.recorder.stop();
+  conyUndo = null;
+  $("#cony-undo").hidden = true;
+  conyStatus("Add a photo, say what's wrong, or type it in any language. Cony writes it up in English for you to check.");
+  updateConyPhotoButton();
+}

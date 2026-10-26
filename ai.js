@@ -22,7 +22,7 @@ function pickProvider() {
 }
 
 // ---------- OpenAI-compatible (OpenAI, Groq) ----------
-function createOpenAiCompatible({ provider, label, apiKey, baseUrl, model }) {
+function createOpenAiCompatible({ provider, label, apiKey, baseUrl, model, visionModel, speechModel }) {
   function post(body) {
     return fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -53,10 +53,36 @@ function createOpenAiCompatible({ provider, label, apiKey, baseUrl, model }) {
     { role: 'user', content: message },
   ];
 
+  const jsonInstructions = (system, schema) => `${system}\n\nRespond with only a JSON object that matches this JSON Schema exactly:\n${JSON.stringify({ ...schema, additionalProperties: false })}`;
+
   return {
     provider,
     label,
     model,
+    // Reads one photo (a data: URL) and answers as JSON.
+    async describeImage({ system, prompt, image, schema }) {
+      const text = await call({
+        model: visionModel,
+        messages: [
+          { role: 'system', content: jsonInstructions(system, schema) },
+          { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: image } }] },
+        ],
+        response_format: { type: 'json_object' },
+      });
+      return JSON.parse(text || '{}');
+    },
+    // Speech to text. audio is a Buffer; returns the words spoken, in the language spoken.
+    async transcribe({ audio, mimeType }) {
+      const ext = /mp4|m4a|aac/.test(mimeType) ? 'm4a' : /ogg/.test(mimeType) ? 'ogg' : /wav/.test(mimeType) ? 'wav' : /mpeg|mp3/.test(mimeType) ? 'mp3' : 'webm';
+      const form = new FormData();
+      form.append('file', new Blob([audio], { type: mimeType }), `voice.${ext}`);
+      form.append('model', speechModel);
+      form.append('response_format', 'json');
+      const response = await fetch(`${baseUrl}/audio/transcriptions`, { method: 'POST', headers: { authorization: `Bearer ${apiKey}` }, body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw errorFrom(response.status, data);
+      return (data.text || '').trim();
+    },
     async generateJson({ system, prompt, schema }) {
       const strictSchema = { ...schema, additionalProperties: false };
       try {
@@ -114,6 +140,8 @@ function createOpenAi() {
     apiKey: process.env.OPENAI_API_KEY.trim(),
     baseUrl: 'https://api.openai.com/v1',
     model: process.env.OPENAI_MODEL || 'gpt-5-mini',
+    visionModel: process.env.OPENAI_VISION_MODEL || process.env.OPENAI_MODEL || 'gpt-5-mini',
+    speechModel: process.env.OPENAI_SPEECH_MODEL || 'whisper-1',
   });
 }
 
@@ -124,6 +152,9 @@ function createGroq() {
     apiKey: process.env.GROQ_API_KEY.trim(),
     baseUrl: 'https://api.groq.com/openai/v1',
     model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    // Groq's free photo-reading and speech models (console.groq.com/docs/vision, /docs/speech-to-text).
+    visionModel: process.env.GROQ_VISION_MODEL || 'qwen/qwen3.8-27b',
+    speechModel: process.env.GROQ_SPEECH_MODEL || 'whisper-large-v3-turbo',
   });
 }
 
@@ -163,6 +194,31 @@ function createGemini() {
         return JSON.parse(response.text || '{}');
       } catch (error) {
         if (error instanceof SyntaxError) throw error;
+        throw geminiError(error);
+      }
+    },
+    async describeImage({ system, prompt, image, schema }) {
+      const [, mimeType, data] = image.match(/^data:([^;]+);base64,(.+)$/) || [];
+      try {
+        const response = await client.models.generateContent({
+          model,
+          config: { systemInstruction: system, responseMimeType: 'application/json', responseSchema: toGeminiSchema(schema) },
+          contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType, data } }] }],
+        });
+        return JSON.parse(response.text || '{}');
+      } catch (error) {
+        if (error instanceof SyntaxError) throw error;
+        throw geminiError(error);
+      }
+    },
+    async transcribe({ audio, mimeType }) {
+      try {
+        const response = await client.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: 'Transcribe this voice note word for word, in the language spoken. Reply with only the transcript.' }, { inlineData: { mimeType: mimeType.split(';')[0], data: audio.toString('base64') } }] }],
+        });
+        return (response.text || '').trim();
+      } catch (error) {
         throw geminiError(error);
       }
     },

@@ -26,7 +26,7 @@ app.get('/healthz', (req, res) => {
 // Only new reports carry photos (up to four, compressed, as base64); everything else stays small.
 const reportJson = express.json({ limit: '14mb' });
 const smallJson = express.json({ limit: '64kb' });
-const photoRoute = (req) => req.method === 'POST' && (req.path === '/api/issues' || /^\/api\/issues\/[^/]+\/after-photos$/.test(req.path));
+const photoRoute = (req) => req.method === 'POST' && (req.path === '/api/issues' || req.path === '/api/cony/photo' || /^\/api\/issues\/[^/]+\/after-photos$/.test(req.path));
 app.use((req, res, next) => (photoRoute(req) ? reportJson : smallJson)(req, res, next));
 
 // Shared report links: /r/<id> shows a preview card in texts and social posts, then opens the report.
@@ -131,7 +131,7 @@ app.post('/api/chat', aiBurst('chat', 20), aiDailyCap, async (req, res) => {
         : [];
 
     const stream = ai.chatStream({
-        system: 'You are Cony, Sidewalk\'s friendly traffic-cone helper: upbeat, warm, and encouraging, but always practical and to the point. You never use cone puns more than once in a conversation. You are a guide to local infrastructure reporting in North and South Carolina. Help residents describe issues clearly, understand common civic reporting steps, and draft concise messages. Do not claim to submit reports, contact officials, verify local laws, or know agency contacts unless the user provides that information. Ask a clarifying question when location or details matter. Be transparent when uncertain. Never state phone numbers, email addresses, or web addresses unless the user gave them; instead tell the user where to look, such as their city or county website or 311 line. Write in plain text for a small chat bubble: no Markdown, no headings, no tables, no bold or asterisks, and no emoji. Keep replies under 120 words; use short numbered steps (1. 2. 3.) only when giving steps.',
+        system: 'You are Cony, Sidewalk\'s friendly traffic-cone helper: upbeat, warm, and encouraging, but always practical and to the point. You never use cone puns more than once in a conversation. You are a guide to local infrastructure reporting in North and South Carolina. Help residents describe issues clearly, understand common civic reporting steps, and draft concise messages. Do not claim to submit reports, contact officials, verify local laws, or know agency contacts unless the user provides that information. Ask a clarifying question when location or details matter. Be transparent when uncertain. Never state phone numbers, email addresses, or web addresses unless the user gave them; instead tell the user where to look, such as their city or county website or 311 line. Write in plain text for a small chat bubble: no Markdown, no headings, no tables, no bold or asterisks, and no emoji. If the resident writes in another language, reply in that language. Keep replies under 120 words; use short numbered steps (1. 2. 3.) only when giving steps.',
         history: priorMessages,
         message: message.trim(),
     });
@@ -168,6 +168,74 @@ app.post('/api/chat', aiBurst('chat', 20), aiDailyCap, async (req, res) => {
         send({ error: describeAiError(error) || 'The reply was cut off. Please try again.' });
     }
     res.end();
+});
+
+// ---------- Cony fills in reports: from a photo, a voice note, or rough text in any language ----------
+const REPORT_FIELDS = {
+    category: { type: 'string', enum: ['safety', 'access', 'lighting', 'parks', 'other'] },
+    title: { type: 'string' },
+    description: { type: 'string' },
+};
+const REPORT_RULES = 'Categories: safety = street safety (potholes, crosswalks, signs, traffic hazards, broken sidewalks that are a tripping hazard); access = accessibility (curb ramps, blocked or missing sidewalks, wheelchair barriers); lighting = streetlights; parks = parks and public spaces (trash, benches, playgrounds, overgrowth); other = anything else. The title is at most 60 characters, plain, specific, and in English, like "Deep pothole in the right lane". The description is 1 to 3 short sentences in English, at most 350 characters, saying what is wrong and who it affects. Never invent a street name, address, size, injury, or how long it has been there unless the resident said so. Never mention people, faces, or license plates.';
+const cleanReport = (draft) => ({
+    category: REPORT_FIELDS.category.enum.includes(draft.category) ? draft.category : 'other',
+    title: String(draft.title || '').replace(/\s+/g, ' ').trim().slice(0, 70),
+    description: String(draft.description || '').trim().slice(0, 400),
+});
+function aiFailure(res, label, error) {
+    console.error(`${label} failed:`, error.message);
+    const friendly = describeAiError(error);
+    if (friendly) return res.status(503).json({ error: friendly });
+    res.status(502).json({ error: 'Cony couldn’t do that just now. Please try again, or fill in the form yourself.' });
+}
+const needAi = (req, res, next) => (ai ? next() : res.status(503).json({ error: 'Cony is off on this server. Fill in the form yourself for now.' }));
+
+app.post('/api/cony/photo', aiBurst('cony-photo', 8), needAi, aiDailyCap, async (req, res) => {
+    const photo = req.body?.photo;
+    if (typeof photo !== 'string' || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(photo) || photo.length > 3_000_000) {
+        return res.status(400).json({ error: 'Send one JPEG, PNG, or WebP photo under 2 MB.' });
+    }
+    try {
+        const draft = await ai.describeImage({
+            system: `You are Cony, Sidewalk's helper. A resident took a photo of a problem in a public street, sidewalk, or park in North or South Carolina. Fill in a report from what is clearly visible. ${REPORT_RULES} Set isStreetIssue to false if the photo doesn't show a public infrastructure problem (for example a selfie, a pet, food, a screenshot, or the inside of a home). Set privacyConcern to true if a person's face or a readable license plate is clearly visible.`,
+            prompt: 'Fill in the report from this photo.',
+            image: photo,
+            schema: { type: 'object', properties: { isStreetIssue: { type: 'boolean' }, privacyConcern: { type: 'boolean' }, ...REPORT_FIELDS }, required: ['isStreetIssue', 'privacyConcern', 'category', 'title', 'description'] },
+        });
+        if (draft.isStreetIssue === false) return res.json({ isStreetIssue: false });
+        res.json({ isStreetIssue: true, privacyConcern: Boolean(draft.privacyConcern), ...cleanReport(draft) });
+    } catch (error) {
+        aiFailure(res, 'Photo reading', error);
+    }
+});
+
+const AUDIO_TYPES = /^(audio\/(webm|ogg|mp4|mpeg|wav|x-m4a|aac)|video\/(webm|mp4))(;.*)?$/i;
+app.post('/api/cony/transcribe', aiBurst('cony-voice', 8), needAi, express.raw({ type: (req) => AUDIO_TYPES.test(req.headers['content-type'] || ''), limit: '6mb' }), aiDailyCap, async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length < 1000) return res.status(400).json({ error: 'That recording was empty. Tap Say it and try again.' });
+    try {
+        const text = await ai.transcribe({ audio: req.body, mimeType: req.headers['content-type'].split(';')[0].toLowerCase() });
+        if (!text) return res.status(422).json({ error: 'Cony couldn’t hear any words. Try again somewhere quieter.' });
+        res.json({ text: text.slice(0, 2000) });
+    } catch (error) {
+        aiFailure(res, 'Voice transcription', error);
+    }
+});
+
+app.post('/api/cony/tidy', aiBurst('cony-tidy', 10), needAi, aiDailyCap, async (req, res) => {
+    const text = req.body?.text;
+    if (typeof text !== 'string' || text.trim().length < 5 || text.length > 2000) return res.status(400).json({ error: 'Say or type a few words about the problem first.' });
+    try {
+        const draft = await ai.generateJson({
+            system: `You are Cony, Sidewalk's helper. A resident described a problem in a public street, sidewalk, or park, maybe in a language other than English, maybe as a rambling voice note. Turn it into a clear report in English. ${REPORT_RULES} Set language to the English name of the language the resident used (for example "English", "Spanish", "Vietnamese").`,
+            prompt: `Resident's words:\n${text.trim()}`,
+            schema: { type: 'object', properties: { ...REPORT_FIELDS, language: { type: 'string' } }, required: ['category', 'title', 'description', 'language'] },
+        });
+        const report = cleanReport(draft);
+        if (!report.title || !report.description) return res.status(502).json({ error: 'Cony couldn’t make sense of that. Try adding a little more detail.' });
+        res.json({ ...report, language: String(draft.language || 'English').slice(0, 40) });
+    } catch (error) {
+        aiFailure(res, 'Report tidy-up', error);
+    }
 });
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

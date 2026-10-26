@@ -156,7 +156,7 @@ input[readonly], textarea[readonly] { background: var(--surface-2); }
 .hint.right { text-align: right; }
 .form-error { min-height: 0; margin-top: 10px; color: var(--cone); font-size: 14px; font-weight: 600; }
 .form-error:empty { display: none; }
-.char-count { margin-top: 4px; color: var(--faint); font-size: 12.5px; text-align: right; }
+.char-count { margin-top: 4px; color: var(--muted); font-size: 12.5px; text-align: right; }
 .check { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0 4px; font-size: 14.5px; line-height: 1.4; cursor: pointer; }
 .check input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--asphalt); }
 .notice { margin: 4px 0 6px; padding: 12px 14px; border-radius: var(--radius-s); background: var(--verge-soft); color: var(--ink); font-size: 14.5px; line-height: 1.45; }
@@ -788,3 +788,22 @@ body[data-page=home] .chat-widget, body[data-page=converter] .chat-widget { disp
 @keyframes confetti-fall { to { transform: translate(var(--drift), 105vh) rotate(var(--spin)); opacity: .9; } }
 .staff-filters .active span { background: #ffffff2e; color: inherit; }
 .before-after { margin-top: 14px; }
+
+/* ---------- Smarter Cony: fill-in helper and moods ---------- */
+.cony-assist { display: flex; gap: 12px; margin: 4px 0 16px; padding: 12px 14px; border: 1.5px dashed var(--line-strong); border-radius: var(--radius-m); background: var(--surface-2); }
+.cony-assist .cony-sm { width: 34px; height: 34px; }
+.cony-assist-body { display: grid; gap: 6px; min-width: 0; flex: 1; }
+.cony-assist-body .hint { margin: 0; }
+.cony-assist-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cony-assist.busy .cony-assist-actions .btn { opacity: .6; }
+#cony-voice.recording { border-color: var(--danger); color: var(--danger); }
+#cony-voice.recording svg { animation: mic-pulse 1s ease-in-out infinite; }
+@keyframes mic-pulse { 50% { transform: scale(1.18); } }
+.cony-frown, .cony-hat, .cony-party { display: none; }
+.mood-sad .cony-frown, .mood-working .cony-hat, .mood-party .cony-party { display: inline; }
+.mood-sad .cony-smile { display: none; }
+.mood-sad .cony-pupils { transform: translateY(1.2px); }
+.mood-party .cony-party { animation: cony-sparkle 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes cony-sparkle { 50% { opacity: .35; transform: scale(1.08); } }
+.mood-line { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; color: var(--muted); font-size: 14.5px; }
+@media (prefers-reduced-motion: reduce) { #cony-voice.recording svg, .mood-party .cony-party { animation: none; } }
