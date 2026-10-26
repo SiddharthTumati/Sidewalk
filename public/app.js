@@ -401,6 +401,7 @@ function renderTrackerDetail(issue) {
       <button class="btn btn-ghost" type="button" data-share="${escapeHtml(issue.id)}"><svg aria-hidden="true"><use href="#i-share"/></svg>Share</button>
     </div>
     <a class="text-link small packet-link" href="/packet/${encodeURIComponent(issue.id)}" target="_blank" rel="noopener">Council packet (print or save as PDF)</a>
+    ${ownerBoxHtml(issue)}
     <p class="hint">The review step checks that a report is clear. It doesn't confirm conditions on site.</p>
     <div class="flag-row">${issue.userFlagged ? `<p class="hint">You flagged this report. Thanks for helping keep Sidewalk useful.</p>` : `<button class="text-link small" type="button" data-flag-issue="${escapeHtml(issue.id)}">Flag this report</button>`}</div>`;
 
@@ -1102,7 +1103,8 @@ async function submitReport(event) {
       if (isDesktop()) $(`.issue-card[data-issue="${CSS.escape(result.issue.id)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       else window.scrollTo({ top: 0, behavior: "smooth" });
     });
-    showToast("Posted. Your report is on the map.");
+    rememberOwnership(result.issue.id, result.ownerToken);
+    showActionToast("Posted. Your report is on the map.", "Undo", () => withdrawReport(result.issue.id, { fromUndo: true }));
   } catch (error) {
     if (error.status === 0) { setLoading(button, false); return saveOfflineReport(draft, form); }
     if (error.status === 409 && error.data?.duplicate) showDuplicate(error.data.duplicate);
@@ -2537,6 +2539,7 @@ async function flushOutbox() {
       try {
         const result = await api("/api/issues", { method: "POST", json: draft });
         await outboxDelete(id);
+        rememberOwnership(result.issue.id, result.ownerToken);
         if (!issues.some((i) => i.id === result.issue.id)) issues.unshift(result.issue);
         sent += 1;
       } catch (error) {
@@ -2584,3 +2587,142 @@ $("#outbox-send").addEventListener("click", async (event) => {
 window.addEventListener("offline", updateOutboxBar);
 updateOutboxBar();
 setTimeout(() => flushOutbox(), 2500);
+
+/* ---------- Your own reports: undo, delete, edit ---------- */
+// Guests get a private key for each report they post, kept only in this browser for 24 hours.
+var OWNED_KEY = "sidewalk-owned-reports";
+var GUEST_OWNER_MS = 24 * 60 * 60 * 1000;
+var EDIT_WINDOW_MS = 60 * 60 * 1000;
+var OWNER_LOCKED = ["sent_to_agency", "in_progress", "resolved"];
+
+function ownedTokens() {
+  try {
+    const all = JSON.parse(localStorage.getItem(OWNED_KEY) || "{}");
+    const fresh = Object.fromEntries(Object.entries(all).filter(([, v]) => Date.now() - v.at < GUEST_OWNER_MS));
+    return fresh;
+  } catch {
+    return {};
+  }
+}
+function rememberOwnership(id, token) {
+  if (!token) return;
+  try { localStorage.setItem(OWNED_KEY, JSON.stringify({ ...ownedTokens(), [id]: { token, at: Date.now() } })); } catch { /* storage blocked */ }
+}
+function forgetOwnership(id) {
+  try { const all = ownedTokens(); delete all[id]; localStorage.setItem(OWNED_KEY, JSON.stringify(all)); } catch { /* storage blocked */ }
+}
+const ownerToken = (id) => ownedTokens()[id]?.token;
+const isMine = (issue) => Boolean(issue.mine || ownerToken(issue.id));
+
+function showActionToast(message, label, onAction, ms = 10000) {
+  const toast = $("#toast");
+  toast.textContent = `${message} `;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "toast-action";
+  button.textContent = label;
+  button.addEventListener("click", () => { toast.classList.remove("visible", "has-action"); onAction(); }, { once: true });
+  toast.append(button);
+  toast.classList.add("visible", "has-action");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("visible", "has-action"), ms);
+}
+
+function ownerBoxHtml(issue) {
+  if (!isMine(issue)) return "";
+  const id = escapeHtml(issue.id);
+  if (issue.removalRequested) {
+    return `<div class="owner-box"><strong>You posted this.</strong><span>You asked a coordinator to remove it. They'll take a look soon.</span></div>`;
+  }
+  const locked = OWNER_LOCKED.includes(issue.status) || issue.othersBacking > 0;
+  const canEdit = !issue.othersBacking && Date.now() - issue.createdAt < EDIT_WINDOW_MS;
+  const why = OWNER_LOCKED.includes(issue.status)
+    ? "It's already been sent to the city, so it can't be deleted."
+    : issue.othersBacking > 0 ? "Neighbors are backing it, so deleting it would erase their support." : "Posted by mistake? You can delete it.";
+  return `<div class="owner-box" id="owner-box">
+    <strong>You posted this.</strong><span>${escapeHtml(why)}</span>
+    <div class="owner-actions">
+      ${canEdit ? `<button class="btn btn-ghost btn-small" type="button" data-owner-edit="${id}">Fix a typo</button>` : ""}
+      ${locked
+        ? `<button class="btn btn-ghost btn-small" type="button" data-owner-request="${id}">Ask a coordinator to remove it</button>`
+        : `<button class="btn btn-ghost btn-small danger" type="button" data-owner-delete="${id}" data-confirm="Tap again to delete">Delete my report</button>`}
+    </div>
+    <form class="owner-edit" id="owner-edit" hidden novalidate>
+      <label class="field-label" for="owner-edit-title">Short title</label>
+      <input id="owner-edit-title" maxlength="70" value="${escapeHtml(issue.title)}">
+      <label class="field-label" for="owner-edit-description">What's happening?</label>
+      <textarea id="owner-edit-description" rows="3" maxlength="400">${escapeHtml(issue.description)}</textarea>
+      <p class="form-error" id="owner-edit-error" role="alert"></p>
+      <div class="button-row tight"><button class="btn btn-primary btn-small" type="submit">Save changes</button><button class="btn btn-ghost btn-small" type="button" id="owner-edit-cancel">Cancel</button></div>
+    </form>
+  </div>`;
+}
+
+async function withdrawReport(id, { fromUndo = false } = {}) {
+  try {
+    await api(`/api/issues/${encodeURIComponent(id)}/withdraw`, { method: "POST", json: { ownerToken: ownerToken(id) } });
+    issues = issues.filter((issue) => issue.id !== id);
+    forgetOwnership(id);
+    if (selectedIssueId === id) selectedIssueId = null;
+    if (currentTrackerIssue === id) currentTrackerIssue = null;
+    renderAll();
+    showToast(fromUndo ? "Undone. Your report was removed." : "Your report was deleted.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const del = event.target.closest?.("[data-owner-delete]");
+  if (del) {
+    if (needsSecondTap(del)) return;
+    setLoading(del, true);
+    await withdrawReport(del.dataset.ownerDelete);
+    return;
+  }
+  const request = event.target.closest?.("[data-owner-request]");
+  if (request) {
+    setLoading(request, true);
+    try {
+      const id = request.dataset.ownerRequest;
+      await api(`/api/issues/${encodeURIComponent(id)}/removal-request`, { method: "POST", json: { ownerToken: ownerToken(id) } });
+      showToast("Sent. A coordinator will review it soon.");
+      await refreshState();
+    } catch (error) {
+      showToast(error.message);
+      setLoading(request, false);
+    }
+    return;
+  }
+  const edit = event.target.closest?.("[data-owner-edit]");
+  if (edit) {
+    $("#owner-edit").hidden = false;
+    edit.hidden = true;
+    $("#owner-edit-title").focus();
+    return;
+  }
+  if (event.target.closest?.("#owner-edit-cancel")) {
+    $("#owner-edit").hidden = true;
+    $("[data-owner-edit]") && ($("[data-owner-edit]").hidden = false);
+  }
+});
+
+document.addEventListener("submit", async (event) => {
+  if (event.target.id !== "owner-edit") return;
+  event.preventDefault();
+  const id = $("[data-owner-edit]")?.dataset.ownerEdit || currentTrackerIssue;
+  const button = event.target.querySelector('[type="submit"]');
+  setLoading(button, true);
+  try {
+    const { issue } = await api(`/api/issues/${encodeURIComponent(id)}/edit`, {
+      method: "POST",
+      json: { ownerToken: ownerToken(id), title: $("#owner-edit-title").value, description: $("#owner-edit-description").value },
+    });
+    issues = issues.map((entry) => (entry.id === issue.id ? { ...entry, ...issue } : entry));
+    renderAll();
+    showToast("Saved.");
+  } catch (error) {
+    $("#owner-edit-error").textContent = error.message;
+    setLoading(button, false);
+  }
+});

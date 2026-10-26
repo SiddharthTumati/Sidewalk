@@ -170,6 +170,11 @@ if (!photoColumns.has('kind')) db.exec("ALTER TABLE issue_photos ADD COLUMN kind
 // A report sent to the city with no update for this long is "stale": followers get a nudge.
 const STALE_MS = 21 * 24 * 60 * 60 * 1000;
 const STALE_STAGES = ['sent_to_agency', 'in_progress'];
+// Undoing your own report: allowed until other neighbors back it or staff send it to the city.
+if (!issueColumns.has('owner_token_hash')) db.exec('ALTER TABLE issues ADD COLUMN owner_token_hash TEXT');
+const OWNER_LOCKED_STAGES = ['sent_to_agency', 'in_progress', 'resolved'];
+const GUEST_OWNER_MS = 24 * 60 * 60 * 1000;
+const EDIT_WINDOW_MS = 60 * 60 * 1000;
 db.exec(`
   CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -582,6 +587,9 @@ function serializeIssue(row, userId) {
       .map((photo) => `/api/photos/${photo.id}`),
     stale: STALE_STAGES.includes(row.status) && Date.now() - (row.status_updated_at || row.created_at) > STALE_MS,
     daysSinceUpdate: Math.floor((Date.now() - (row.status_updated_at || row.created_at)) / 86400000),
+    mine: Boolean(userId && row.created_by === userId),
+    removalRequested: Boolean(row.needs_review && /^The reporter asked to remove/.test(row.review_reason || '')),
+    othersBacking: othersBacking(row),
     safety: impact.safetyFor(row),
     createdAt: row.created_at,
     userSupported,
@@ -1002,7 +1010,13 @@ router.post('/issues', reportHourly, reportDaily, requireHuman((req) => !req.use
   if (req.user) db.prepare('INSERT OR IGNORE INTO issue_subscriptions (issue_id, user_id, created_at) VALUES (?, ?, ?)').run(id, req.user.id, createdAt);
   impact.queue(id);
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(id);
-  res.status(201).json({ issue: serializeIssue(issue, req.user?.id) });
+  // Guests get a private key, kept in their browser, to undo or delete this report for 24 hours.
+  let ownerToken;
+  if (!req.user) {
+    ownerToken = crypto.randomBytes(24).toString('base64url');
+    db.prepare('UPDATE issues SET owner_token_hash = ? WHERE id = ?').run(hashToken(ownerToken), id);
+  }
+  res.status(201).json({ issue: serializeIssue(issue, req.user?.id), ownerToken });
   if (req.app.locals.ai) setImmediate(() => reviewIssueWithAi(id, req.app.locals.ai));
 });
 
@@ -1022,6 +1036,63 @@ router.post('/issues/:id/support', requireVerifiedUser, limit({ name: 'endorse',
   const account = db.prepare('SELECT created_at FROM users WHERE id = ?').get(req.user.id);
   const pending = account.created_at > Date.now() - ENDORSE_MIN_AGE_MS;
   res.json({ count, pending, pendingSupporters: supportCounts(issue.id).pending, underReview, goalReached, priorityReached });
+});
+
+// ---------- Your own reports: undo, delete, edit ----------
+function othersBacking(row) {
+  return (row.base_supporters || 0) + db.prepare('SELECT COUNT(*) AS n FROM supports WHERE issue_id = ? AND (? IS NULL OR user_id != ?)').get(row.id, row.created_by, row.created_by).n;
+}
+
+// The reporter is the signed-in account that posted it, or a guest holding the report's key (for 24 hours).
+function ownsReport(req, row) {
+  if (req.user && row.created_by && row.created_by === req.user.id) return true;
+  const token = req.body?.ownerToken;
+  return Boolean(!row.created_by && row.owner_token_hash && typeof token === 'string' && token.length < 200
+    && Date.now() - row.created_at < GUEST_OWNER_MS
+    && crypto.timingSafeEqual(Buffer.from(hashToken(token)), Buffer.from(row.owner_token_hash)));
+}
+
+function ownerLockReason(row) {
+  if (OWNER_LOCKED_STAGES.includes(row.status)) return 'Staff have already sent this report to the city, so it can’t be deleted now.';
+  if (othersBacking(row) > 0) return 'Other neighbors are backing this report, so deleting it would erase their support.';
+  return null;
+}
+
+const ownerLimit = limit({ name: 'own-report', max: 30, windowMs: 60 * 60 * 1000, by: 'ip+user' });
+
+router.post('/issues/:id/withdraw', ownerLimit, (req, res) => {
+  const row = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  if (!row || !ownsReport(req, row)) return res.status(403).json({ error: 'Only the person who posted this report can delete it.' });
+  const locked = ownerLockReason(row);
+  if (locked) return res.status(409).json({ error: locked, canRequest: true });
+  db.prepare('DELETE FROM issues WHERE id = ?').run(row.id);
+  console.log(`[activity] reporter withdrew ${row.id} ${row.title}`);
+  res.json({ deleted: true });
+});
+
+router.post('/issues/:id/removal-request', ownerLimit, (req, res) => {
+  const row = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  if (!row || !ownsReport(req, row)) return res.status(403).json({ error: 'Only the person who posted this report can ask to remove it.' });
+  const reason = String(req.body?.reason || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  db.prepare('UPDATE issues SET needs_review = 1, review_reason = ? WHERE id = ?')
+    .run(`The reporter asked to remove this report${reason ? `: ${reason}` : '.'}`, row.id);
+  console.log(`[activity] reporter asked to remove ${row.id} ${row.title}`);
+  res.json({ requested: true });
+});
+
+router.post('/issues/:id/edit', ownerLimit, (req, res) => {
+  const row = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
+  if (!row || !ownsReport(req, row)) return res.status(403).json({ error: 'Only the person who posted this report can edit it.' });
+  if (Date.now() - row.created_at > EDIT_WINDOW_MS) return res.status(409).json({ error: 'Reports can only be edited in the first hour.' });
+  if (othersBacking(row) > 0) return res.status(409).json({ error: 'Other neighbors already back this report as written, so it can’t be edited now.' });
+  const title = cleanText(req.body?.title);
+  const description = cleanText(req.body?.description, { multiline: true });
+  if (title.length < 3 || title.length > 70) return res.status(400).json({ error: 'Issue titles must be 3 to 70 characters.' });
+  if (description.length < 5 || description.length > 400) return res.status(400).json({ error: 'Issue descriptions must be 5 to 400 characters.' });
+  const textProblem = checkPublicText(`${title}\n${description}`);
+  if (textProblem) return res.status(400).json({ error: textProblem });
+  db.prepare('UPDATE issues SET title = ?, description = ? WHERE id = ?').run(title, description, row.id);
+  res.json({ issue: serializeIssue(db.prepare('SELECT * FROM issues WHERE id = ?').get(row.id), req.user?.id) });
 });
 
 // ---------- Closing the loop ----------
