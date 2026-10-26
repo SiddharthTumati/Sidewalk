@@ -28,6 +28,27 @@ const reportJson = express.json({ limit: '14mb' });
 const smallJson = express.json({ limit: '64kb' });
 app.use((req, res, next) => (req.method === 'POST' && req.path === '/api/issues' ? reportJson : smallJson)(req, res, next));
 
+// Shared report links: /r/<id> shows a preview card in texts and social posts, then opens the report.
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+app.get('/r/:id', limit({ name: 'share-page', max: 120, windowMs: 60 * 1000 }), (req, res) => {
+    const share = communityRoutes.sharePreview(req.params.id);
+    if (!share) return res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+    const title = `${share.title} · Sidewalk`;
+    const description = `${share.supporters} of ${share.goal} neighbors backing this in ${share.area}. ${share.description}`.slice(0, 280);
+    const target = `/?issue=${encodeURIComponent(share.id)}#report`;
+    res.set('Cache-Control', 'public, max-age=300').type('html').send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<meta name="description" content="${escapeHtml(description)}">
+<meta property="og:type" content="website"><meta property="og:site_name" content="Sidewalk">
+<meta property="og:title" content="${escapeHtml(share.title)}"><meta property="og:description" content="${escapeHtml(description)}">
+<meta property="og:url" content="${escapeHtml(share.url)}"><meta property="og:image" content="${escapeHtml(share.image)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta http-equiv="refresh" content="0; url=${escapeHtml(target)}">
+<link rel="icon" href="/icon-192.png"><link rel="stylesheet" href="/style.css">
+</head><body class="legal-page"><main style="padding:40px 20px;text-align:center"><p>Opening <a href="${escapeHtml(target)}">${escapeHtml(share.title)}</a> on Sidewalk…</p></main></body></html>`);
+});
+
 // Policy pages at clean addresses: /privacy, /terms, /ai, /guidelines
 for (const page of ['privacy', 'terms', 'ai', 'guidelines']) {
     app.get(`/${page}`, (req, res) => res.sendFile(path.join(__dirname, 'public', `${page}.html`)));

@@ -222,6 +222,10 @@ function reviewBadge(issue) {
   return issue.underReview ? `<span class="badge review" title="Paused while a coordinator checks the endorsements">Under review</span>` : "";
 }
 
+function shareButton(issue) {
+  return `<button class="icon-btn share-btn" type="button" data-share="${escapeHtml(issue.id)}" aria-label="Share: ${escapeHtml(issue.title)}"><svg aria-hidden="true"><use href="#i-share"/></svg></button>`;
+}
+
 function supportControl(issue, verb = "Back this") {
   if (issue.supporters >= GOAL) return `<span class="goal-label">Goal reached</span>`;
   if (issue.userSupported) return `<button class="support-button supported" type="button" data-supported-for="${escapeHtml(issue.id)}" disabled>Backed</button>`;
@@ -300,7 +304,7 @@ function renderIssueList() {
       ${thumb}
       <div class="card-foot">
         <div class="support-meta"><span><strong data-count-for="${escapeHtml(issue.id)}">${issue.supporters}</strong> of ${GOAL} neighbors${pendingNote(issue)}</span>${laneHtml(issue)}</div>
-        ${supportControl(issue)}
+        <div class="card-actions">${shareButton(issue)}${supportControl(issue)}</div>
       </div>
     </article>`;
   }).join("") || (activeFilter === "all"
@@ -339,8 +343,8 @@ function renderPetitions() {
 
 function nextStageFor(issue) {
   const status = issue.status || "submitted";
-  if (status === "submitted" || status === "resolved") return null;
-  if (status === "ai_reviewed") return issue.supporters >= PRIORITY_THRESHOLD ? "community_priority" : "sent_to_agency";
+  if (status === "resolved") return null;
+  if (status === "submitted" || status === "ai_reviewed") return issue.supporters >= PRIORITY_THRESHOLD ? "community_priority" : "sent_to_agency";
   return STAGE_ORDER[STAGE_ORDER.indexOf(status) + 1] || null;
 }
 
@@ -381,7 +385,10 @@ function renderTrackerDetail(issue) {
     ${gallery}
     <ol class="timeline" aria-label="Progress">${steps}</ol>
     ${issue.underReview ? `<p class="notice warn">Under review: a coordinator is checking this report's endorsements before it can move forward.</p>` : ""}
-    <button class="btn ${issue.isSubscribed ? "btn-ghost" : "btn-primary"} btn-block" type="button" data-subscribe-issue="${escapeHtml(issue.id)}">${issue.isSubscribed ? "Following. Tap to stop" : "Follow updates"}</button>
+    <div class="button-row tight detail-actions">
+      <button class="btn ${issue.isSubscribed ? "btn-ghost" : "btn-primary"}" type="button" data-subscribe-issue="${escapeHtml(issue.id)}">${issue.isSubscribed ? "Following. Tap to stop" : "Follow updates"}</button>
+      <button class="btn btn-ghost" type="button" data-share="${escapeHtml(issue.id)}"><svg aria-hidden="true"><use href="#i-share"/></svg>Share</button>
+    </div>
     <p class="hint">The review step checks that a report is clear. It doesn't confirm conditions on site.</p>
     <div class="flag-row">${issue.userFlagged ? `<p class="hint">You flagged this report. Thanks for helping keep Sidewalk useful.</p>` : `<button class="text-link small" type="button" data-flag-issue="${escapeHtml(issue.id)}">Flag this report</button>`}</div>`;
 
@@ -389,11 +396,22 @@ function renderTrackerDetail(issue) {
   const enabled = coordinatorConfigured && Boolean(nextStage);
   $("#coordinator-status-note").textContent = !coordinatorConfigured
     ? "Status updates are off until the server has an ADMIN_TOKEN."
-    : nextStage ? "Only publish a status you've confirmed." : issue.status === "submitted" ? "This report is waiting on its automatic review." : "This report is at its final stage.";
+    : nextStage ? "Only publish a status you've confirmed." : "This report is at its final stage.";
   $("#tracker-new-status").innerHTML = nextStage ? `<option value="${nextStage}">${STAGE_LABELS[nextStage]}</option>` : `<option value="">No next step</option>`;
   ["#tracker-new-status", "#tracker-status-note", "#tracker-update-status"].forEach((sel) => { $(sel).disabled = !enabled; });
+  const staffCan = (cap) => Boolean(activeUser.can?.includes(cap));
+  const signedInStaff = staffCan("update_status") || staffCan("moderate");
+  $("#staff-signed-in").hidden = !signedInStaff;
+  $("#staff-signed-in").textContent = signedInStaff ? `Signed in as ${activeUser.roleLabel}. No token needed.` : "";
+  $("#token-field").hidden = signedInStaff;
   $("#tracker-admin-token").disabled = !coordinatorConfigured;
-  $$("#mod-selected [data-mod-action], #load-mod-queue").forEach((button) => { button.disabled = !coordinatorConfigured; });
+  if (signedInStaff) {
+    $("#coordinator-status-note").textContent = nextStage ? "Only publish a status you've confirmed." : "This report is at its final stage.";
+    ["#tracker-new-status", "#tracker-status-note", "#tracker-update-status"].forEach((sel) => { $(sel).disabled = !nextStage || !staffCan("update_status"); });
+  }
+  $$("#mod-selected [data-mod-action], #load-mod-queue, #load-activity").forEach((button) => { button.disabled = !(coordinatorConfigured || staffCan("moderate")); });
+  updateRoleToolsVisibility();
+
 }
 
 function renderHotspots() {
@@ -644,6 +662,9 @@ function setAccountMode(mode, { keepNotice = false } = {}) {
     $("#settings-avatar").textContent = initials(activeUser.name);
     $("#settings-name").textContent = activeUser.name;
     $("#settings-email").textContent = activeUser.email;
+    $("#settings-role").hidden = !activeUser.role || activeUser.role === "resident";
+    $("#settings-role").textContent = activeUser.roleLabel || "";
+    renderPushSetting();
     const box = $("#account-email-updates");
     box.checked = emailConfigured && Boolean(activeUser.emailUpdates);
     box.disabled = !emailConfigured;
@@ -1125,10 +1146,13 @@ $("#flag-form").addEventListener("submit", async (event) => {
 });
 
 /* ---------- Coordinator moderation ---------- */
-function coordinatorToken() {
+// Staff requests use the signed-in account when it has the role, otherwise the typed token.
+function staffHeaders(capability) {
   const token = $("#tracker-admin-token").value.trim();
-  if (!token) showToast("Enter the coordinator token first.");
-  return token;
+  if (token) return { Authorization: `Bearer ${token}` };
+  if (activeUser.can?.includes(capability)) return {};
+  showToast("Sign in with a staff account, or enter the coordinator token.");
+  return null;
 }
 
 function modItemHtml(item) {
@@ -1157,12 +1181,12 @@ function modItemHtml(item) {
 }
 
 async function loadModerationQueue() {
-  const token = coordinatorToken();
-  if (!token) return;
+  const headers = staffHeaders("moderate");
+  if (!headers) return;
   const button = $("#load-mod-queue");
   setLoading(button, true);
   try {
-    const result = await api("/api/admin/moderation", { headers: { Authorization: `Bearer ${token}` } });
+    const result = await api("/api/admin/moderation", { headers });
     $("#mod-queue").innerHTML = result.items.length
       ? result.items.map(modItemHtml).join("")
       : `<li class="mod-item"><p class="mod-meta">Nothing flagged, hidden, or under review. All clear.</p></li>`;
@@ -1187,14 +1211,14 @@ function needsSecondTap(button) {
 async function runModAction(button, issueId) {
   const action = button.dataset.modAction;
   if (!issueId) return showToast("Choose a report first.");
-  const token = coordinatorToken();
-  if (!token || needsSecondTap(button)) return;
+  const headers = staffHeaders("moderate");
+  if (!headers || needsSecondTap(button)) return;
   button.classList.remove("confirming");
   setLoading(button, true);
   try {
     const method = action === "delete" ? "DELETE" : "POST";
     const path = action === "delete" ? `/api/admin/issues/${encodeURIComponent(issueId)}` : `/api/admin/issues/${encodeURIComponent(issueId)}/${action}`;
-    const result = await api(path, { method, headers: { Authorization: `Bearer ${token}` }, json: method === "POST" ? {} : undefined });
+    const result = await api(path, { method, headers, json: method === "POST" ? {} : undefined });
     const row = $(`.mod-item[data-mod-id="${CSS.escape(issueId)}"]`);
     if (row) {
       if (result.deleted) row.remove();
@@ -1271,6 +1295,8 @@ document.addEventListener("click", (event) => {
   }
   const close = target.closest("[data-close]");
   if (close) return closeDialog(close.dataset.close);
+  const share = target.closest("[data-share]");
+  if (share) { event.stopPropagation(); return shareIssue(share.dataset.share); }
   const flag = target.closest("[data-flag-issue]");
   if (flag) return openFlag(flag.dataset.flagIssue);
   const feed = target.closest("[data-open-issue]");
@@ -1468,15 +1494,15 @@ $("#tracker-detail").addEventListener("click", async (event) => {
 });
 $("#tracker-update-status").addEventListener("click", async (event) => {
   const issue = issues.find((item) => item.id === currentTrackerIssue);
-  const token = $("#tracker-admin-token").value.trim();
   if (!issue) return showToast("Choose a report first.");
-  if (!token) return showToast("Enter the coordinator token.");
+  const headers = staffHeaders("update_status");
+  if (!headers) return;
   const button = event.currentTarget;
   setLoading(button, true);
   try {
     const result = await api(`/api/issues/${encodeURIComponent(issue.id)}/status`, {
       method: "PATCH",
-      headers: { Authorization: `Bearer ${token}` },
+      headers,
       json: { status: $("#tracker-new-status").value, note: $("#tracker-status-note").value },
     });
     Object.assign(issue, result.issue);
@@ -1736,8 +1762,18 @@ function handleLinkParams() {
   const params = new URLSearchParams(location.search);
   const verified = params.get("verified");
   const reset = params.get("reset");
-  if (!verified && !reset) return;
+  const shared = params.get("issue");
+  if (!verified && !reset && !shared) return;
   history.replaceState(null, "", `${location.pathname}${location.hash}`);
+  if (shared) {
+    // Opened from a shared link (/r/<id>): show that report.
+    if (issues.some((issue) => issue.id === shared)) {
+      navigateTo("report");
+      requestAnimationFrame(() => selectIssue(shared));
+    } else {
+      showToast("That report isn't available anymore.");
+    }
+  }
   if (verified === "1") showToast("Email confirmed. You're signed in.");
   if (verified === "expired") openAccount("login", "That verification link has expired or was already used. Sign in, or send yourself a new link.");
   if (reset) {
@@ -1792,3 +1828,154 @@ $("#delete-form").addEventListener("submit", async (event) => {
     setLoading(button, false);
   }
 });
+
+/* ---------- Sharing ---------- */
+async function shareIssue(id) {
+  const issue = issues.find((entry) => entry.id === id);
+  if (!issue) return;
+  const url = `${location.origin}/r/${encodeURIComponent(id)}`;
+  const text = `${issue.title}: ${issue.supporters} of ${GOAL} neighbors are backing this on Sidewalk. Add your voice:`;
+  if (navigator.share) {
+    try { await navigator.share({ title: issue.title, text, url }); return; } catch (error) { if (error.name === "AbortError") return; }
+  }
+  try {
+    await navigator.clipboard.writeText(`${text} ${url}`);
+    showToast("Link copied. Paste it in a text or post.");
+  } catch {
+    window.prompt("Copy this link:", url);
+  }
+}
+
+/* ---------- Home-screen app and phone notifications ---------- */
+let swRegistration = null;
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").then((reg) => { swRegistration = reg; }).catch(() => {});
+}
+
+const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isStandalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+
+function urlBase64ToUint8Array(base64) {
+  const padded = (base64 + "=".repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+}
+
+async function currentPushSubscription() {
+  if (!pushSupported()) return null;
+  const reg = swRegistration || await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function renderPushSetting() {
+  const button = $("#push-toggle");
+  const note = $("#push-note");
+  if (!pushSupported()) {
+    button.hidden = true;
+    note.textContent = isIos && !isStandalone
+      ? "On iPhone, add Sidewalk to your Home Screen first (Share, then Add to Home Screen), then turn this on from the app."
+      : "This browser can't show notifications.";
+    return;
+  }
+  button.hidden = false;
+  if (Notification.permission === "denied") {
+    button.hidden = true;
+    note.textContent = "Notifications are blocked for Sidewalk in your browser settings.";
+    return;
+  }
+  const sub = await currentPushSubscription().catch(() => null);
+  button.textContent = sub ? "Turn off" : "Turn on";
+  button.dataset.on = sub ? "1" : "";
+  note.textContent = sub ? "On for this device." : "Get a notification when an issue you back or follow moves forward.";
+}
+
+$("#push-toggle").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  setLoading(button, true);
+  try {
+    const reg = swRegistration || await navigator.serviceWorker.ready;
+    if (button.dataset.on) {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await api("/api/push/subscribe", { method: "DELETE", json: { endpoint: sub.endpoint } });
+        await sub.unsubscribe();
+      }
+      showToast("Phone notifications are off for this device.");
+    } else {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") throw new Error("Notifications weren't allowed. You can change this in your browser settings.");
+      const { publicKey } = await api("/api/push/key");
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+      await api("/api/push/subscribe", { method: "POST", json: { subscription: sub.toJSON() } });
+      showToast("Phone notifications are on.");
+    }
+  } catch (error) {
+    showToast(error.message || "Couldn't change notifications. Try again.");
+  } finally {
+    setLoading(button, false);
+    renderPushSetting();
+  }
+});
+
+/* ---------- Staff roles and activity ---------- */
+$("#save-role").addEventListener("click", async (event) => {
+  const headers = staffHeaders("assign_roles");
+  if (!headers) return;
+  const email = $("#role-email").value.trim();
+  if (!email) return showToast("Enter their email.");
+  const button = event.currentTarget;
+  setLoading(button, true);
+  try {
+    const { user } = await api("/api/admin/roles", { method: "POST", headers, json: { email, role: $("#role-select").value } });
+    showToast(`${user.name} is now: ${user.roleLabel}.`);
+    $("#role-email").value = "";
+    if (!$("#staff-list").hidden) loadStaff();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    setLoading(button, false);
+  }
+});
+
+async function loadStaff() {
+  const headers = staffHeaders("assign_roles");
+  if (!headers) return;
+  try {
+    const { staff, roles } = await api("/api/admin/roles", { headers });
+    const label = Object.fromEntries(roles.map((r) => [r.role, r.label]));
+    $("#staff-list").innerHTML = staff.length
+      ? staff.map((u) => `<li class="mod-item"><strong>${escapeHtml(u.name)}</strong><p class="mod-meta">${escapeHtml(u.email)} · ${escapeHtml(label[u.role] || u.role)}</p></li>`).join("")
+      : `<li class="mod-item"><p class="mod-meta">No staff yet. Everyone is a resident.</p></li>`;
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+$("#load-staff").addEventListener("click", loadStaff);
+
+$("#load-activity").addEventListener("click", async (event) => {
+  const headers = staffHeaders("moderate");
+  if (!headers) return;
+  const button = event.currentTarget;
+  setLoading(button, true);
+  const words = { status: "moved", hide: "hid", restore: "restored", delete: "deleted", suspend: "suspended the reporter of", "block-network": "blocked the network of", unsuspend: "lifted the suspension on", role: "changed a role" };
+  try {
+    const { activity } = await api("/api/admin/activity", { headers });
+    $("#activity-list").innerHTML = activity.length
+      ? activity.map((a) => {
+        const report = issues.find((issue) => issue.id === a.target);
+        const what = a.action === "role" ? `changed a role (${escapeHtml(a.detail)})` : `${escapeHtml(words[a.action] || a.action)} ${report ? `“${escapeHtml(report.title)}”` : "a report"}${a.action === "status" ? ` (${escapeHtml(a.detail)})` : ""}`;
+        return `<li><strong>${escapeHtml(a.who)}</strong> ${what}<small>${timeAgo(a.at)}</small></li>`;
+      }).join("")
+      : `<li>No staff activity yet.</li>`;
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    setLoading(button, false);
+  }
+});
+
+// Role tools show for admins, or once someone types the coordinator token (to set up the first admin).
+function updateRoleToolsVisibility() {
+  $("#role-tools").hidden = !(activeUser.can?.includes("assign_roles") || $("#tracker-admin-token").value.trim());
+}
+$("#tracker-admin-token").addEventListener("input", updateRoleToolsVisibility);

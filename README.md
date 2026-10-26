@@ -35,6 +35,8 @@ Small infrastructure problems are easy to notice and hard to get fixed. A pothol
 | **Cony (AI helper)** | Animated traffic-cone mascot that thinks, talks, and hops; chat replies stream in word by word as they're written, formal-request drafter with suggested urgency, and an automatic first review of every new report |
 | **Accounts** | Email verification, resend link, forgot/reset password, 8-character minimum, unsubscribe links in every email |
 | **Anti-abuse** | Cloudflare Turnstile bot check, throwaway-email blocking, rate limits and daily AI caps, endorsements that only count once an account is a day old, burst detection for fake accounts on one network, duplicate-report detection, link and profanity filter |
+| **Sharing and alerts** | Share any report with a link that shows a preview card in texts and posts; install Sidewalk on your home screen; optional phone notifications and email when issues you back or follow move forward |
+| **Staff roles** | City staff update statuses and coordinators moderate while signed in; admins assign roles; every staff action is logged |
 | **Moderation** | "Flag this report" for neighbors (3 flags hides a report), and coordinator tools to hide, restore, delete, and suspend the person or network behind a report |
 | **Design** | Street-marking look (asphalt and road-paint yellow), light and dark mode, bottom tab bar with a raised Cony button and slide-up sheets on phones, top nav on desktop, branded loading screen, skeleton placeholders, friendly empty and error states, offline banner, "road closed" 404 page |
 | **Accessibility** | Passes automated axe checks (WCAG 2.1 AA) on every page and dialog in light and dark mode; skip link, keyboard-friendly lists, visible focus, screen-reader labels, reduced-motion support |
@@ -88,7 +90,7 @@ Locally you don't need any keys. Without email set up, new accounts are signed i
 | `BREVO_API_KEY` | Sends verification, reset, and update emails over HTTPS |
 | `SMTP_FROM` | Sender, e.g. `Sidewalk <you@example.com>` (must be verified in Brevo) |
 | `APP_URL` | Public URL of the site, used in email links |
-| `ADMIN_TOKEN` | Coordinator password for moving issues along the tracker and moderating reports |
+| `ADMIN_TOKEN` | Master key for staff tools; use it once to make your own account an admin, then sign in instead |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile "I'm human" check on sign-up, guest reports, and password reset |
 | `ENDORSE_MIN_ACCOUNT_AGE_HOURS` | How old an account must be before its endorsements count (default 24; 0 for demos) |
 | `SQLITE_PATH` | Where the database file lives (`/data/sidewalk.sqlite` on Railway) |
@@ -107,6 +109,8 @@ public/
 security.js      Security headers, rate limits, daily AI caps, input cleaning
 abuse.js         Bot check, throwaway-email blocking, text filter, network fingerprints
 photometa.js     Removes hidden metadata from uploaded photos
+jobs.js          Background jobs (notifications, threshold checks, cleanup)
+notify.js        Email and phone notifications from one place
 public/privacy.html, terms.html, ai.html, guidelines.html   Policy pages
 docs/screenshots Images used in this README
 ```

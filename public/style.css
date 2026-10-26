@@ -724,3 +724,28 @@ body[data-page=home] .chat-widget, body[data-page=converter] .chat-widget { disp
 /* Request writer header */
 .cony-hero { display: flex; align-items: center; gap: 16px; }
 @media (max-width: 639px) { .cony-xl { width: 70px; height: 70px; } }
+
+/* ---------- Share, notifications, staff ---------- */
+.card-actions { display: flex; align-items: center; gap: 6px; }
+.share-btn { width: 38px; height: 38px; color: var(--muted); }
+.share-btn svg { width: 19px; height: 19px; }
+.detail-actions > .btn { flex: 1 1 0; }
+.detail-actions svg { width: 18px; height: 18px; }
+.push-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 10px; padding: 12px 14px; border-radius: var(--radius-s); background: var(--surface-2); }
+.push-setting .hint { margin-top: 2px; }
+.push-setting .btn { flex: none; }
+.role-badge { margin-top: 6px; }
+#load-activity { margin-top: 10px; }
+.activity-list { display: grid; gap: 8px; margin-top: 10px; padding: 0; list-style: none; font-size: 14px; }
+.activity-list:empty { display: none; }
+.activity-list li { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); line-height: 1.45; }
+.activity-list small { display: block; color: var(--muted); font-size: 12.5px; }
+#role-tools select, #role-tools input { width: 100%; }
+#load-staff { margin-top: 8px; }
+
+/* Danger buttons: a deeper red in light mode so text meets 4.5:1 contrast. */
+:root { --danger: #b3401a; }
+@media (prefers-color-scheme: dark) { :root { --danger: var(--cone); } }
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+.btn.confirming, .btn-danger { border-color: var(--danger); background: var(--danger); color: #fff; }
+@media (prefers-color-scheme: dark) { .btn.confirming, .btn-danger { color: #1e2226; } }
