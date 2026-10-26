@@ -551,6 +551,8 @@ function setAccountMode(mode, { keepNotice = false } = {}) {
   show("#back-to-login", mode === "forgot" || mode === "reset");
   show("#resend-verification", false);
   show("#guest-note", !signedIn && isAuthForm);
+  show("#register-agree", mode === "register");
+  show("#delete-form", false);
   prepareTurnstile("account-turnstile", mode === "register" || mode === "forgot");
 
   $$("#account-tabs [data-account-mode]").forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.accountMode === mode)));
@@ -1519,3 +1521,32 @@ setInterval(async () => {
     renderSecondaryMaps();
   } catch {}
 }, 15_000);
+
+/* ---------- Your data: delete account ---------- */
+$("#start-delete").addEventListener("click", () => {
+  $("#delete-form").hidden = false;
+  $("#delete-error").textContent = "";
+  $("#delete-password").value = "";
+  $("#keep-reports").checked = false;
+  $("#delete-password").focus();
+});
+$("#cancel-delete").addEventListener("click", () => { $("#delete-form").hidden = true; });
+$("#delete-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const password = $("#delete-password").value;
+  if (!password) return ($("#delete-error").textContent = "Enter your password to confirm.");
+  const button = $("#confirm-delete");
+  setLoading(button, true);
+  try {
+    await api("/api/auth/delete-account", { method: "POST", json: { password, keepReports: $("#keep-reports").checked } });
+    $("#delete-form").hidden = true;
+    closeDialog("account-modal");
+    setActiveUser(null);
+    await refreshState();
+    showToast("Your account has been deleted. Thanks for helping your neighborhood.");
+  } catch (error) {
+    $("#delete-error").textContent = error.message;
+  } finally {
+    setLoading(button, false);
+  }
+});

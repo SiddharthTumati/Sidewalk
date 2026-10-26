@@ -574,3 +574,14 @@ body[data-page=home] .chat-widget, body[data-page=converter] .chat-widget { disp
 .mod-item strong { display: block; font-size: 14.5px; }
 .mod-item .mod-meta { margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.45; }
 .mod-item .mod-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+/* ---------- Your data, policy links, footer ---------- */
+.data-tools { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.data-tools .hint a, .hint a, .chat-disclaimer a { color: var(--sky); font-weight: 600; text-underline-offset: 2px; }
+.delete-form { display: grid; gap: 8px; margin-top: 12px; }
+.delete-form .notice { margin: 0; }
+.btn-danger { border-color: var(--cone); background: var(--cone); color: #fff; }
+.site-footer { display: grid; gap: 10px; margin-top: 28px; padding: 22px 0 8px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; line-height: 1.5; }
+.site-footer-links { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.site-footer-links a { color: var(--ink); font-weight: 600; text-decoration: none; }
+.site-footer-links a:hover { text-decoration: underline; text-underline-offset: 3px; }

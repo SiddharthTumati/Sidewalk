@@ -5,6 +5,7 @@ const express = require('express');
 const nodemailer = require('nodemailer');
 const { DatabaseSync } = require('node:sqlite');
 const { limit, takeAiCredit, adminLocked, recordAdminFailure, clearAdminFailures, clientIp, cleanText, inCarolinas } = require('./security');
+const { stripPhotoMetadata } = require('./photometa');
 const { requireHuman, turnstileSiteKey, isThrowawayEmail, checkPublicText, setNetworkKey, networkId } = require('./abuse');
 
 const router = express.Router();
@@ -143,6 +144,7 @@ if (!storedNetworkKey) {
 }
 setNetworkKey(storedNetworkKey);
 
+
 const seedIssues = [
   ['crosswalk', 'Crosswalk needs a fresh coat', 'safety', 'Street safety', 'The paint has almost disappeared at the school crossing on Maple and 4th.', 38, 'Charlotte, NC', 35.2271, -80.8431],
   ['ramp', 'Missing curb ramp at the corner', 'access', 'Accessibility', 'Wheelchairs and strollers have to enter the road to get around this corner.', 24, 'Raleigh, NC', 35.7796, -78.6382],
@@ -192,10 +194,24 @@ function decodePhoto(dataUrl) {
   const data = Buffer.from(base64, 'base64');
   if (!data.length || data.length > MAX_PHOTO_BYTES) throw new Error('Each photo must be smaller than 2.5 MB.');
   if (!PHOTO_SIGNATURES[mime](data)) throw new Error('One of the photos is not a valid image file.');
-  return { mime, data };
+  try {
+    // Never keep hidden location or camera data, even if the browser didn't remove it.
+    return { mime, data: stripPhotoMetadata(mime, data) };
+  } catch (error) {
+    throw new Error('One of the photos is not a valid image file.');
+  }
 }
 
 const insertPhoto = db.prepare('INSERT INTO issue_photos (id, issue_id, mime, data, position, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+
+// One-time cleanup: remove hidden metadata from photos uploaded before this was added.
+if (!db.prepare("SELECT 1 FROM app_settings WHERE key = 'photos_metadata_stripped'").get()) {
+  const update = db.prepare('UPDATE issue_photos SET data = ? WHERE id = ?');
+  for (const photo of db.prepare('SELECT id, mime, data FROM issue_photos').all()) {
+    try { update.run(stripPhotoMetadata(photo.mime, Buffer.from(photo.data)), photo.id); } catch (error) { /* leave as is */ }
+  }
+  db.prepare("INSERT INTO app_settings (key, value) VALUES ('photos_metadata_stripped', '1')").run();
+}
 
 // Older databases kept a single photo as a data URL on the issue row; move it into issue_photos.
 for (const row of db.prepare(`SELECT id, photo_data, created_at FROM issues
@@ -682,6 +698,60 @@ router.post('/auth/reset-password', rateLimit(10, 60 * 60 * 1000), async (req, r
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
   setSession(res, user.id);
   res.json({ user: publicUser(user), message: 'Password updated. You’re signed in.', emailConfigured: hasSmtp });
+});
+
+// ---------- Your data ----------
+router.get('/auth/export', requireVerifiedUser, limit({ name: 'export', max: 10, windowMs: 60 * 60 * 1000, by: 'user' }), (req, res) => {
+  const user = db.prepare('SELECT id, name, email, email_updates, verified_at, created_at FROM users WHERE id = ?').get(req.user.id);
+  const iso = (ms) => (ms ? new Date(ms).toISOString() : null);
+  const reports = db.prepare('SELECT * FROM issues WHERE created_by = ? ORDER BY created_at').all(user.id).map((row) => ({
+    id: row.id,
+    title: row.title,
+    category: row.category_label,
+    description: row.description,
+    area: row.distance,
+    latitude: row.lat,
+    longitude: row.lng,
+    status: row.status,
+    hidden: Boolean(row.hidden_at),
+    postedAt: iso(row.created_at),
+    photos: db.prepare('SELECT id FROM issue_photos WHERE issue_id = ? ORDER BY position').all(row.id).map((photo) => `${appUrl()}/api/photos/${photo.id}`),
+  }));
+  const titled = (sql) => db.prepare(sql).all(user.id).map((row) => ({ ...row, at: iso(row.at) }));
+  const data = {
+    exportedAt: new Date().toISOString(),
+    about: 'Everything Sidewalk stores that is linked to your account. Passwords are stored only as a one-way hash and are not included.',
+    account: { name: user.name, email: user.email, emailUpdates: Boolean(user.email_updates), createdAt: iso(user.created_at), verifiedAt: iso(user.verified_at) },
+    reports,
+    endorsements: titled('SELECT issues.id AS issueId, issues.title, supports.created_at AS at FROM supports JOIN issues ON issues.id = supports.issue_id WHERE supports.user_id = ? ORDER BY supports.created_at'),
+    following: titled('SELECT issues.id AS issueId, issues.title, issue_subscriptions.created_at AS at FROM issue_subscriptions JOIN issues ON issues.id = issue_subscriptions.issue_id WHERE issue_subscriptions.user_id = ? ORDER BY issue_subscriptions.created_at'),
+    flags: titled('SELECT issues.id AS issueId, issues.title, issue_flags.reason, issue_flags.created_at AS at FROM issue_flags JOIN issues ON issues.id = issue_flags.issue_id WHERE issue_flags.user_id = ? ORDER BY issue_flags.created_at'),
+  };
+  res.setHeader('Content-Disposition', `attachment; filename="sidewalk-data-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('application/json').send(JSON.stringify(data, null, 2));
+});
+
+router.post('/auth/delete-account', requireVerifiedUser, rateLimit(5, 60 * 60 * 1000), async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!(await verifyPassword(password, user.password_hash))) return res.status(401).json({ error: 'That password isn’t right.', field: 'password' });
+  const keepReports = req.body?.keepReports === true;
+  db.exec('BEGIN');
+  try {
+    if (keepReports) db.prepare('UPDATE issues SET created_by = NULL WHERE created_by = ?').run(user.id);
+    else db.prepare('DELETE FROM issues WHERE created_by = ?').run(user.id);
+    // Sessions, endorsements, follows, flags, and email links are removed with the account.
+    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  console.log(`Account deleted at the user's request (${keepReports ? 'reports kept without a name' : 'reports deleted'}).`);
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `sidewalk_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
+  res.json({ deleted: true });
 });
 
 router.post('/auth/logout', (req, res) => {

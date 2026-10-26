@@ -94,6 +94,16 @@
 					<li><strong>Follow it to fixed</strong><span>Every status change lands on the tracker, and in your inbox if you follow it.</span></li>
 				</ol>
 			</div>
+			<footer class="site-footer">
+				<nav class="site-footer-links" aria-label="Policies">
+					<a href="/privacy">Privacy</a>
+					<a href="/terms">Terms</a>
+					<a href="/ai">AI use</a>
+					<a href="/guidelines">Community guidelines</a>
+					<a href="mailto:siddharth.tumati@gmail.com">Contact</a>
+				</nav>
+				<p>Sidewalk is a student project for the Congressional App Challenge, not a government service. Posting doesn't contact your city. <strong>Emergencies: call 911.</strong></p>
+			</footer>
 		</section>
 
 		<main class="workspace page-view" id="report-page" data-page-section="report" hidden>
@@ -159,7 +169,7 @@
 					<input id="converter-location" name="location" maxlength="160" placeholder="Street, intersection, or landmark">
 					<p class="form-error" id="converter-error" role="alert"></p>
 					<button class="btn btn-primary btn-block" id="converter-submit" type="submit">Write my request</button>
-					<p class="hint">You'll review everything before anything is sent.</p>
+					<p class="hint">You'll review everything before anything is sent. <a href="/ai" target="_blank" rel="noopener">How Sidewalk uses AI</a></p>
 				</form>
 				<section class="panel converter-result" id="converter-result" aria-live="polite" hidden>
 					<div class="result-heading">
@@ -325,7 +335,7 @@
 				<div class="turnstile-slot" id="report-turnstile" hidden></div>
 				<p class="form-error" id="form-error" role="alert"></p>
 				<button class="btn btn-primary btn-block btn-lg" id="report-submit" type="submit">Post report</button>
-				<p class="hint center">Keep it respectful and specific. Don't include faces or license plates.</p>
+				<p class="hint center">Reports are public. Follow the <a href="/guidelines" target="_blank" rel="noopener">Community Guidelines</a>: no faces, license plates, or private info. Emergencies: call 911.</p>
 			</form>
 		</dialog>
 
@@ -368,6 +378,7 @@
 					<div class="turnstile-slot" id="account-turnstile" hidden></div>
 					<p class="form-error" id="account-error" role="alert"></p>
 					<button class="btn btn-primary btn-block btn-lg" id="account-submit" type="submit">Sign in</button>
+					<p class="hint center" id="register-agree" hidden>By creating an account, you agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Use</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>, and confirm you're 13 or older.</p>
 					<button class="btn btn-ghost btn-block" id="resend-verification" type="button" hidden>Send a new verification link</button>
 					<button class="text-link center" id="back-to-login" type="button" hidden>Back to sign in</button>
 				</form>
@@ -382,6 +393,26 @@
 					<div class="button-row">
 						<button class="btn btn-ghost" id="save-email-preferences" type="button">Save</button>
 						<button class="btn btn-danger-ghost" id="sign-out-button" type="button">Sign out</button>
+					</div>
+					<div class="data-tools">
+						<h3 class="mod-head">Your data</h3>
+						<p class="hint">Get a copy of everything linked to your account, or delete it. See the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+						<div class="button-row tight">
+							<a class="btn btn-ghost btn-small" id="download-data" href="/api/auth/export" download>Download my data</a>
+							<button class="btn btn-ghost btn-small danger" id="start-delete" type="button">Delete my account</button>
+						</div>
+						<form class="delete-form" id="delete-form" hidden novalidate>
+							<p class="notice warn">This permanently deletes your account, endorsements, follows, and flags. It can't be undone.</p>
+							<label class="check"><input id="keep-reports" type="checkbox"><span>Keep my reports on the map, without my name</span></label>
+							<p class="hint">If you leave this unchecked, reports you posted are deleted too.</p>
+							<label class="field-label" for="delete-password">Enter your password to confirm</label>
+							<input id="delete-password" type="password" autocomplete="current-password" maxlength="200">
+							<p class="form-error" id="delete-error" role="alert"></p>
+							<div class="button-row tight">
+								<button class="btn btn-ghost btn-small" id="cancel-delete" type="button">Cancel</button>
+								<button class="btn btn-small btn-danger" id="confirm-delete" type="submit">Delete forever</button>
+							</div>
+						</form>
 					</div>
 				</div>
 
@@ -473,7 +504,7 @@
 					<textarea id="chat-input" name="message" rows="1" maxlength="2000" placeholder="Ask about a local issue" enterkeyhint="send" required></textarea>
 					<button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg><use href="#i-send"/></svg></button>
 				</form>
-				<p class="chat-disclaimer">AI can be wrong. Confirm details with your local agency.</p>
+				<p class="chat-disclaimer">AI can be wrong. Confirm details with your local agency. <a href="/ai" target="_blank" rel="noopener">How Sidewalk uses AI</a></p>
 			</div>
 			<button class="chat-launcher" id="chat-launcher" type="button" aria-expanded="false" aria-controls="chat-panel"><svg aria-hidden="true"><use href="#i-chat"/></svg><span>Ask Sidewalk</span></button>
 		</section>

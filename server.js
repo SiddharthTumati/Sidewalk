@@ -28,6 +28,11 @@ const reportJson = express.json({ limit: '14mb' });
 const smallJson = express.json({ limit: '64kb' });
 app.use((req, res, next) => (req.method === 'POST' && req.path === '/api/issues' ? reportJson : smallJson)(req, res, next));
 
+// Policy pages at clean addresses: /privacy, /terms, /ai, /guidelines
+for (const page of ['privacy', 'terms', 'ai', 'guidelines']) {
+    app.get(`/${page}`, (req, res) => res.sendFile(path.join(__dirname, 'public', `${page}.html`)));
+}
+
 // Serves all files inside your public folder (index.html, style.css, app.js)
 app.use(express.static('public'));
 app.use('/vendor/leaflet-heat', express.static(path.join(__dirname, 'node_modules', 'leaflet.heat', 'dist')));

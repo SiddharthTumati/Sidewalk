@@ -1,0 +1,22 @@
+/* Policy pages: Privacy, Terms, AI Use, Community Guidelines */
+body.legal-page { padding-bottom: 0; }
+.legal-back { margin-left: auto; color: #f4f4f1; font-size: 15px; font-weight: 700; text-decoration: none; }
+.legal-back:hover { text-decoration: underline; text-underline-offset: 3px; }
+.legal-wrap { display: grid; gap: 22px; width: min(100% - 32px, 760px); margin: 28px auto 40px; }
+.legal-nav { display: flex; flex-wrap: wrap; gap: 8px; }
+.legal-nav a { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border: 1.5px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 14px; font-weight: 600; text-decoration: none; }
+.legal-nav a[aria-current="page"] { border-color: var(--ink); background: var(--ink); color: var(--concrete); }
+.legal-doc { padding: clamp(20px, 5vw, 40px); border-radius: var(--radius-l); background: var(--surface); box-shadow: 0 1px 0 var(--line); }
+.legal-kicker { color: var(--muted); font-size: 13.5px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.legal-doc h1 { margin: 6px 0 18px; font: 850 clamp(30px, 6vw, 42px)/1.05 var(--display); font-stretch: 112%; letter-spacing: -.015em; }
+.legal-doc h2 { margin: 30px 0 10px; font: 800 21px/1.25 var(--display); font-stretch: 108%; }
+.legal-doc p, .legal-doc li { font-size: 16.5px; line-height: 1.65; }
+.legal-doc p + p { margin-top: 10px; }
+.legal-doc p:not(.legal-callout) > strong:only-child { display: block; margin-top: 16px; }
+.legal-doc ul { display: grid; gap: 8px; margin: 10px 0 0; padding-left: 22px; }
+.legal-doc a { color: var(--sky); font-weight: 600; text-underline-offset: 3px; }
+.legal-doc code { padding: 1px 5px; border-radius: 4px; background: var(--surface-2); font-size: .92em; }
+.legal-callout { margin-bottom: 8px; padding: 16px 18px; border-left: 5px solid var(--paint); border-radius: var(--radius-s); background: var(--surface-2); }
+.legal-contact { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line); }
+.legal-contact h2 { margin-top: 0; }
+.legal-footer { padding: 0 16px 36px; color: var(--muted); font-size: 14px; text-align: center; }

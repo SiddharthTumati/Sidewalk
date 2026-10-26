@@ -103,8 +103,22 @@ public/
   index.html     All pages: map, tracker, petitions, heatmap, Sideassist
   style.css      Design system, light and dark themes, phone and desktop layouts
   app.js         Map, reporting flow, photo compression, sign-in, chat
+security.js      Security headers, rate limits, daily AI caps, input cleaning
+abuse.js         Bot check, throwaway-email blocking, text filter, network fingerprints
+photometa.js     Removes hidden metadata from uploaded photos
+public/privacy.html, terms.html, ai.html, guidelines.html   Policy pages
 docs/screenshots Images used in this README
 ```
+
+## Privacy and policies
+
+Sidewalk publishes a [Privacy Policy](/privacy), [Terms of Use](/terms), [AI Use Notice](/ai), and [Community Guidelines](/guidelines) (also linked in the app's footer). Highlights:
+
+- One essential sign-in cookie; no analytics, ads, or tracking.
+- Names and emails are never public. Endorsements and flags are anonymous.
+- IP addresses are never stored in the database, only a keyed one-way network fingerprint for spotting fake accounts.
+- Hidden photo metadata (GPS location, camera details) is removed in the browser and again on the server.
+- Anyone can **download their data** or **delete their account** from account settings.
 
 ## Responsible AI
 
