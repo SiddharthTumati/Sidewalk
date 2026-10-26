@@ -23,23 +23,35 @@ function pickProvider() {
 
 // ---------- OpenAI-compatible (OpenAI, Groq) ----------
 function createOpenAiCompatible({ provider, label, apiKey, baseUrl, model }) {
-  async function call(body) {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+  function post(body) {
+    return fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({ model, ...body }),
     });
+  }
+
+  function errorFrom(status, data) {
+    const message = data.error?.message || `${label} request failed (${status})`;
+    const code = data.error?.code || data.error?.type || '';
+    const kind = status === 401 ? 'auth'
+      : code === 'insufficient_quota' ? 'quota'
+      : status === 429 ? 'rate_limit' : 'other';
+    return new AiError(`${label} ${status}: ${message}`, status, kind);
+  }
+
+  async function call(body) {
+    const response = await post(body);
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = data.error?.message || `${label} request failed (${response.status})`;
-      const code = data.error?.code || data.error?.type || '';
-      const kind = response.status === 401 ? 'auth'
-        : code === 'insufficient_quota' ? 'quota'
-        : response.status === 429 ? 'rate_limit' : 'other';
-      throw new AiError(`${label} ${response.status}: ${message}`, response.status, kind);
-    }
+    if (!response.ok) throw errorFrom(response.status, data);
     return data.choices?.[0]?.message?.content || '';
   }
+
+  const chatMessages = ({ system, history, message }) => [
+    { role: 'system', content: system },
+    ...history.map((entry) => ({ role: entry.role === 'model' ? 'assistant' : 'user', content: entry.text })),
+    { role: 'user', content: message },
+  ];
 
   return {
     provider,
@@ -66,14 +78,31 @@ function createOpenAiCompatible({ provider, label, apiKey, baseUrl, model }) {
         return JSON.parse(text || '{}');
       }
     },
-    async chat({ system, history, message }) {
-      return call({
-        messages: [
-          { role: 'system', content: system },
-          ...history.map((entry) => ({ role: entry.role === 'model' ? 'assistant' : 'user', content: entry.text })),
-          { role: 'user', content: message },
-        ],
-      });
+    async chat(input) {
+      return call({ messages: chatMessages(input) });
+    },
+    // Yields the reply a few words at a time as the model writes it (server-sent events).
+    async *chatStream(input) {
+      const response = await post({ messages: chatMessages(input), stream: true });
+      if (!response.ok) throw errorFrom(response.status, await response.json().catch(() => ({})));
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let newline;
+        while ((newline = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') return;
+          let event;
+          try { event = JSON.parse(payload); } catch { continue; }
+          if (event.error) throw errorFrom(500, event);
+          const text = event.choices?.[0]?.delta?.content;
+          if (text) yield text;
+        }
+      }
     },
   };
 }
@@ -148,6 +177,26 @@ function createGemini() {
           ],
         });
         return response.text || '';
+      } catch (error) {
+        throw geminiError(error);
+      }
+    },
+    async *chatStream({ system, history, message }) {
+      let stream;
+      try {
+        stream = await client.models.generateContentStream({
+          model,
+          config: { systemInstruction: system },
+          contents: [
+            ...history.map((entry) => ({ role: entry.role === 'model' ? 'model' : 'user', parts: [{ text: entry.text }] })),
+            { role: 'user', parts: [{ text: message }] },
+          ],
+        });
+      } catch (error) {
+        throw geminiError(error);
+      }
+      try {
+        for await (const chunk of stream) if (chunk.text) yield chunk.text;
       } catch (error) {
         throw geminiError(error);
       }

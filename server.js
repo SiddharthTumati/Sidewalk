@@ -103,21 +103,44 @@ app.post('/api/chat', aiBurst('chat', 20), aiDailyCap, async (req, res) => {
             .map((entry) => ({ role: entry.role, text: entry.text.slice(0, 2000) }))
         : [];
 
-    try {
-        const reply = await ai.chat({
-            system: 'You are Sidewalk Civic Assistant, a practical and respectful guide to local infrastructure reporting in North and South Carolina. Help residents describe issues clearly, understand common civic reporting steps, and draft concise messages. Do not claim to submit reports, contact officials, verify local laws, or know agency contacts unless the user provides that information. Ask a clarifying question when location or details matter. Be transparent when uncertain. Never state phone numbers, email addresses, or web addresses unless the user gave them; instead tell the user where to look, such as their city or county website or 311 line. Write in plain text for a small chat bubble: no Markdown, no headings, no tables, no bold or asterisks, and no emoji. Keep replies under 120 words; use short numbered steps (1. 2. 3.) only when giving steps.',
-            history: priorMessages,
-            message: message.trim(),
-        });
+    const stream = ai.chatStream({
+        system: 'You are Sidewalk Civic Assistant, a practical and respectful guide to local infrastructure reporting in North and South Carolina. Help residents describe issues clearly, understand common civic reporting steps, and draft concise messages. Do not claim to submit reports, contact officials, verify local laws, or know agency contacts unless the user provides that information. Ask a clarifying question when location or details matter. Be transparent when uncertain. Never state phone numbers, email addresses, or web addresses unless the user gave them; instead tell the user where to look, such as their city or county website or 311 line. Write in plain text for a small chat bubble: no Markdown, no headings, no tables, no bold or asterisks, and no emoji. Keep replies under 120 words; use short numbered steps (1. 2. 3.) only when giving steps.',
+        history: priorMessages,
+        message: message.trim(),
+    });
 
-        if (!reply) return res.status(502).json({ error: 'The assistant returned an empty response. Please try again.' });
-        res.json({ reply });
+    // Wait for the first words before answering, so setup errors (bad key, rate limit)
+    // still come back as a normal error message.
+    let step;
+    try {
+        step = await stream.next();
     } catch (error) {
         console.error('AI assistant failed:', error.message);
         const friendly = describeAiError(error);
         if (friendly) return res.status(503).json({ error: friendly });
-        res.status(502).json({ error: 'Could not get a reply from the AI service. Please try again shortly.' });
+        return res.status(502).json({ error: 'Could not get a reply from the AI service. Please try again shortly.' });
     }
+    if (step.done) return res.status(502).json({ error: 'The assistant returned an empty response. Please try again.' });
+
+    // Stream the reply as newline-separated JSON: {"delta":"..."} ... then {"done":true}.
+    res.status(200).set({
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders();
+    let clientGone = false;
+    res.on('close', () => { if (!res.writableEnded) clientGone = true; });
+    const send = (event) => res.write(`${JSON.stringify(event)}\n`);
+    try {
+        for (; !step.done && !clientGone; step = await stream.next()) send({ delta: step.value });
+        if (clientGone) await stream.return?.();
+        else send({ done: true });
+    } catch (error) {
+        console.error('AI assistant stream failed:', error.message);
+        send({ error: describeAiError(error) || 'The reply was cut off. Please try again.' });
+    }
+    res.end();
 });
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

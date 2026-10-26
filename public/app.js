@@ -1561,20 +1561,98 @@ $("#chat-form").addEventListener("submit", async (event) => {
   chatInput.value = "";
   chatInput.style.height = "auto";
   chatSend.disabled = true;
-  const pending = addChatMessage("", "assistant pending");
-  pending.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span><span class="sr-only">Sidewalk is typing</span>`;
+  const bubble = addChatMessage("", "assistant pending");
+  bubble.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span><span class="sr-only">Sidewalk is typing</span>`;
   try {
-    const data = await api("/api/chat", { method: "POST", json: { message, history: chatHistory.slice(-12) } });
-    pending.remove();
-    addChatMessage(data.reply, "assistant");
-    chatHistory.push({ role: "user", text: message }, { role: "model", text: data.reply });
+    const reply = await streamChatReply(message, bubble);
+    chatHistory.push({ role: "user", text: message }, { role: "model", text: reply });
   } catch (error) {
-    pending.remove();
-    addChatMessage(error.message, "assistant error");
+    bubble.className = "chat-message assistant-message error-message";
+    bubble.textContent = error.message;
   } finally {
+    chatMessages.removeAttribute("aria-busy");
     chatSend.disabled = false;
   }
 });
+
+// Shows the reply as it's written. The server sends small pieces as soon as the AI produces
+// them; we reveal them smoothly, catching up quickly so it finishes when the AI finishes.
+async function streamChatReply(message, bubble) {
+  let response;
+  try {
+    response = await fetch("/api/chat", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history: chatHistory.slice(-12) }),
+    });
+  } catch {
+    throw new Error("Can't reach Sidewalk. Check your connection and try again.");
+  }
+  if (!response.ok || !(response.headers.get("content-type") || "").includes("ndjson")) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Something went wrong. Try again.");
+  }
+
+  let received = "";
+  let shown = 0;
+  let streamDone = false;
+  let streamError = null;
+  let started = false;
+  const nearBottom = () => chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 60;
+
+  const revealed = new Promise((resolve) => {
+    const tick = () => {
+      if (shown < received.length) {
+        if (!started) {
+          started = true;
+          bubble.className = "chat-message assistant-message streaming";
+          chatMessages.setAttribute("aria-busy", "true");
+        }
+        const stick = nearBottom();
+        shown += Math.max(1, Math.ceil((received.length - shown) / 6));
+        bubble.textContent = received.slice(0, shown);
+        if (stick) chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+      if (streamDone && shown >= received.length) return resolve();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        const event = JSON.parse(line);
+        if (event.delta) received += event.delta;
+        if (event.error) streamError = event.error;
+      }
+    }
+  } catch {
+    streamError = streamError || "The reply was cut off. Please try again.";
+  }
+  streamDone = true;
+  await revealed;
+  bubble.classList.remove("streaming");
+  if (streamError && !received) throw new Error(streamError);
+  if (streamError) {
+    const note = document.createElement("span");
+    note.className = "chat-cutoff";
+    note.textContent = ` (${streamError})`;
+    bubble.append(note);
+  }
+  return received;
+}
 
 /* ---------- Start ---------- */
 function handleLinkParams() {

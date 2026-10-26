@@ -666,3 +666,8 @@ body[data-page=home] .chat-widget, body[data-page=converter] .chat-widget { disp
 /* Accessible contrast for the Priority badge in light mode (4.6:1). */
 :root:not([data-theme="dark"]) .badge.priority { color: #b3401a; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .badge.priority { color: var(--cone); } }
+
+/* Streaming chat reply: a blinking caret while the answer is still arriving. */
+.assistant-message.streaming::after { content: ""; display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -2px; background: var(--ink); animation: caret 1s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
+.chat-cutoff { color: var(--muted); font-style: italic; }

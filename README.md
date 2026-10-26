@@ -32,7 +32,7 @@ Small infrastructure problems are easy to notice and hard to get fixed. A pothol
 | **Reports** | Up to 4 photos (camera, picker, drag-and-drop, or paste), compressed on the device before upload, full-screen photo viewer |
 | **Petitions** | One endorsement per verified account; thresholds at 10 (priority) and 50 (council-ready); milestone emails |
 | **Tracker** | Six-stage status timeline per issue; coordinator tools to advance status (protected by an admin token) |
-| **Sideassist (AI)** | Chat assistant, formal-request drafter with suggested urgency, and an automatic first review of every new report |
+| **Sideassist (AI)** | Chat assistant whose replies stream in word by word as they're written, formal-request drafter with suggested urgency, and an automatic first review of every new report |
 | **Accounts** | Email verification, resend link, forgot/reset password, 8-character minimum, unsubscribe links in every email |
 | **Anti-abuse** | Cloudflare Turnstile bot check, throwaway-email blocking, rate limits and daily AI caps, endorsements that only count once an account is a day old, burst detection for fake accounts on one network, duplicate-report detection, link and profanity filter |
 | **Moderation** | "Flag this report" for neighbors (3 flags hides a report), and coordinator tools to hide, restore, delete, and suspend the person or network behind a report |
