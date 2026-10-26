@@ -2091,10 +2091,10 @@ $("#followup-copy").addEventListener("click", async () => {
 });
 
 /* ---------- Staff dashboard ---------- */
-let staffItems = [];
-let staffMe = null;
-let staffFilter = "open";
-const ACTION_STAGES = ["submitted", "ai_reviewed", "community_priority"];
+var staffItems = [];
+var staffMe = null;
+var staffFilter = "open";
+var ACTION_STAGES = ["submitted", "ai_reviewed", "community_priority"];
 
 async function loadStaffQueue() {
   const list = $("#staff-list-main");
@@ -2183,8 +2183,8 @@ $("#staff-list-main").addEventListener("click", async (event) => {
 });
 
 /* ---------- Mark fixed (with after photos) ---------- */
-let fixIssueId = null;
-let fixPhotos = [];
+var fixIssueId = null;
+var fixPhotos = [];
 
 function openFix(id) {
   fixIssueId = id;
@@ -2392,8 +2392,8 @@ function resetConyAssist() {
 }
 
 /* ---------- Impact: scoreboard, safety check, fair share ---------- */
-let impactLoadedAt = 0;
-let crashLayer = null;
+var impactLoadedAt = 0;
+var crashLayer = null;
 
 const pct = (value) => (value == null ? "–" : `${Math.round(value * 100)}%`);
 const daysText = (value) => (value == null ? "–" : value < 1 ? "under a day" : `${value} day${value === 1 ? "" : "s"}`);
@@ -2479,8 +2479,8 @@ $("#crash-toggle").addEventListener("change", async (event) => {
 });
 
 /* ---------- Offline reports: saved on this device, sent when the connection returns ---------- */
-let outboxResumeId = null;
-let flushing = false;
+var outboxResumeId = null;
+var flushing = false;
 
 function outboxDb() {
   return new Promise((resolve, reject) => {
