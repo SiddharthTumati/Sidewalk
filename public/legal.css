@@ -28,3 +28,20 @@ body.legal-page { padding-bottom: 0; }
 .error-wrap h1 { font: 850 clamp(30px, 7vw, 44px)/1.05 var(--display); font-stretch: 112%; letter-spacing: -.015em; }
 .error-text { max-width: 42ch; color: var(--muted); font-size: 17px; line-height: 1.55; }
 .error-actions { justify-content: center; margin-top: 10px; }
+
+/* Open data page */
+.data-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0 14px; }
+.data-stats div { display: grid; gap: 2px; padding: 14px; border-radius: var(--radius-m); background: var(--surface-2); }
+.data-stats strong { font: 850 26px/1.1 var(--display); }
+.data-stats span { color: var(--muted); font-size: 14px; font-weight: 600; }
+.data-downloads { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 6px; }
+.data-table-wrap { overflow-x: auto; }
+.data-fields { width: 100%; border-collapse: collapse; font-size: 15px; }
+.data-fields th, .data-fields td { padding: 9px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.data-fields thead th { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
+.data-fields tbody th { white-space: nowrap; font-weight: 600; }
+#sheets-formula { word-break: break-all; }
+@media (max-width: 560px) { .data-stats { grid-template-columns: 1fr; } .data-fields tbody th { white-space: normal; } }
+.data-downloads .btn { text-decoration: none; }
+.data-downloads .btn-primary { color: var(--primary-ink); }
+.data-downloads .btn-ghost { color: var(--ink); }

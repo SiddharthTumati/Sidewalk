@@ -8,6 +8,7 @@ const { limit, takeAiCredit, adminLocked, recordAdminFailure, clearAdminFailures
 const { stripPhotoMetadata } = require('./photometa');
 const { createJobs } = require('./jobs');
 const { setupImpact } = require('./impact');
+const { setupOpenData } = require('./opendata');
 const { createNotifier } = require('./notify');
 const QRCode = require('qrcode');
 const { requireHuman, turnstileSiteKey, isThrowawayEmail, checkPublicText, setNetworkKey, networkId } = require('./abuse');
@@ -299,6 +300,8 @@ const mailer = hasBrevo ? { sendMail: sendWithBrevo } : smtpTransport;
 const jobs = createJobs(db);
 // Census tract, income, and nearby fatal crashes for each report (see impact.js).
 const impact = setupImpact({ db, jobs, router });
+// Public CSV and GeoJSON downloads of every visible report (see opendata.js).
+setupOpenData({ db, router, limit, serializeIssue, appUrl });
 const notifier = createNotifier({ db, jobs, sendEmail: (m) => sendEmail(m), emailReady: () => Boolean(mailer), hashToken: (t) => hashToken(t), appUrl: () => appUrl(), crypto });
 
 function sendEmail(message) {

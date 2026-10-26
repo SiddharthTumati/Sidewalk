@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+		<meta name="theme-color" content="#23272b">
+		<meta name="description" content="Download every public Sidewalk report as a spreadsheet or map data, free to reuse.">
+		<title>Open data · Sidewalk</title>
+		<link rel="icon" href="/icon-192.png">
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..900&family=Public+Sans:ital,wght@0,400..700;1,400&display=swap" rel="stylesheet">
+		<link rel="stylesheet" href="/style.css">
+		<link rel="stylesheet" href="/legal.css">
+		<script src="/data.js" defer></script>
+	</head>
+	<body class="legal-page">
+		<header class="topbar">
+			<a class="brand" href="/" aria-label="Back to Sidewalk">
+				<span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+				<span class="brand-word">sidewalk</span>
+			</a>
+			<a class="legal-back" href="/">Back to the map</a>
+		</header>
+		<main class="legal-wrap">
+			<article class="legal-doc">
+				<p class="legal-kicker">Open data</p>
+				<h1>Every report, free to download</h1>
+				<p class="legal-callout"><strong>The short version:</strong> anyone can download Sidewalk's public reports to study, map, or bring to a council meeting. It's the same information anyone can already see on the map. It never includes names, emails, accounts, or photos.</p>
+				<div class="data-stats" id="data-stats" aria-live="polite"><p>Loading the latest numbers…</p></div>
+				<div class="data-downloads">
+					<a class="btn btn-primary" href="/api/open/reports.csv" download>Download spreadsheet (CSV)</a>
+					<a class="btn btn-ghost" href="/api/open/reports.geojson" download="sidewalk-reports.geojson">Download map data (GeoJSON)</a>
+				</div>
+				<p class="hint">Updated every few minutes. Hidden and removed reports are left out.</p>
+
+				<h2>What's in it</h2>
+				<div class="data-table-wrap">
+					<table class="data-fields">
+						<caption class="sr-only">Fields in the download</caption>
+						<thead><tr><th scope="col">Column</th><th scope="col">What it means</th></tr></thead>
+						<tbody>
+							<tr><th scope="row"><code>id</code></th><td>A unique ID for the report.</td></tr>
+							<tr><th scope="row"><code>title</code>, <code>description</code></th><td>What the resident wrote.</td></tr>
+							<tr><th scope="row"><code>category</code></th><td>Street safety, Accessibility, Street lighting, Parks &amp; public space, or Neighborhood issue.</td></tr>
+							<tr><th scope="row"><code>status</code></th><td>Submitted, Reviewed for clarity, Neighborhood priority, Sent to the city, In progress, or Fixed.</td></tr>
+							<tr><th scope="row"><code>area</code></th><td>The city or area chosen when it was posted, like "Charlotte, NC".</td></tr>
+							<tr><th scope="row"><code>latitude</code>, <code>longitude</code></th><td>Where it was pinned (about 1 m precision).</td></tr>
+							<tr><th scope="row"><code>reported_at</code>, <code>status_updated_at</code>, <code>fixed_at</code></th><td>Dates and times in UTC (ISO 8601). <code>fixed_at</code> is blank until it's fixed.</td></tr>
+							<tr><th scope="row"><code>days_to_fix</code></th><td>Days from report to fix, for fixed reports.</td></tr>
+							<tr><th scope="row"><code>backers</code></th><td>How many verified neighbors back it.</td></tr>
+							<tr><th scope="row"><code>photos</code></th><td>How many photos it has (the photos themselves are on the report page).</td></tr>
+							<tr><th scope="row"><code>url</code></th><td>A link to the report on Sidewalk.</td></tr>
+						</tbody>
+					</table>
+				</div>
+
+				<h2>Ways to use it</h2>
+				<ul>
+					<li><strong>Spreadsheets:</strong> open the CSV in Excel, Numbers, or Google Sheets. For a sheet that stays up to date, put this in a Google Sheets cell: <code id="sheets-formula">=IMPORTDATA("/api/open/reports.csv")</code></li>
+					<li><strong>Maps:</strong> drop the GeoJSON file into a free tool like <a href="https://geojson.io" rel="noopener">geojson.io</a>, QGIS, or ArcGIS.</li>
+					<li><strong>Apps and class projects:</strong> both links work directly from code, from any website.</li>
+				</ul>
+
+				<h2>Reusing it</h2>
+				<p>You're free to use, share, and build on this data. Please credit "Sidewalk community reports" and link back here. Keep in mind:</p>
+				<ul>
+					<li>Reports are written by residents. They aren't official government records, and Sidewalk doesn't inspect them on site.</li>
+					<li>Backing counts and statuses change over time, so note the date you downloaded.</li>
+					<li>Don't use the data to find, contact, or target the people who posted it.</li>
+				</ul>
+				<section class="legal-contact">
+					<h2>Questions?</h2>
+					<p>Email <a href="mailto:siddharth.tumati@gmail.com">siddharth.tumati@gmail.com</a>.</p>
+				</section>
+			</article>
+		</main>
+		<footer class="legal-footer">
+			<p>Sidewalk is a student project for the Congressional App Challenge. It is not a government service.</p>
+		</footer>
+	</body>
+</html>

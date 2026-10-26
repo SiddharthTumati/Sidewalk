@@ -54,7 +54,7 @@ app.get('/r/:id', limit({ name: 'share-page', max: 120, windowMs: 60 * 1000 }), 
 app.get('/packet/:id', (req, res) => res.sendFile(path.join(__dirname, 'public', 'packet.html')));
 
 // Policy pages at clean addresses: /privacy, /terms, /ai, /guidelines
-for (const page of ['privacy', 'terms', 'ai', 'guidelines']) {
+for (const page of ['privacy', 'terms', 'ai', 'guidelines', 'data']) {
     app.get(`/${page}`, (req, res) => res.sendFile(path.join(__dirname, 'public', `${page}.html`)));
 }
 

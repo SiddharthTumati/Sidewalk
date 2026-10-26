@@ -850,3 +850,8 @@ body[data-page=home] .chat-widget, body[data-page=converter] .chat-widget { disp
   .impact-stats { grid-template-columns: repeat(2, 1fr); }
   .impact-grid, .equity-row { grid-template-columns: 1fr; }
 }
+
+/* Saved-offline reports waiting to send */
+.outbox-bar { position: fixed; left: 50%; bottom: calc(86px + env(safe-area-inset-bottom)); z-index: 2400; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; transform: translateX(-50%); border-radius: 999px; background: var(--asphalt); color: #fff; box-shadow: 0 6px 18px rgb(0 0 0 / .25); font-size: 14.5px; font-weight: 700; white-space: nowrap; }
+.outbox-bar .btn { background: var(--paint); color: #1d2125; border: 0; }
+@media (min-width: 900px) { .outbox-bar { bottom: 24px; } }

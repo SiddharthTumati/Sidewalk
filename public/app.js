@@ -710,7 +710,11 @@ function setActiveUser(user) {
 
 async function refreshState() {
   try {
-    const [auth, result] = await Promise.all([api("/api/auth/me"), api("/api/issues")]);
+    // Offline, the account check can't run, but the last saved report list still can be shown.
+    const [auth, result] = await Promise.all([
+      api("/api/auth/me").catch((error) => { if (error.status === 0 && !navigator.onLine) return { user: activeUser.guest ? null : activeUser, offline: true }; throw error; }),
+      api("/api/issues"),
+    ]);
     emailConfigured = Boolean(auth.emailConfigured);
     turnstileSiteKey = auth.turnstileSiteKey || null;
     coordinatorConfigured = Boolean(result.coordinatorConfigured);
@@ -723,7 +727,7 @@ async function refreshState() {
     renderAll();
   } catch (error) {
     if (!dataLoaded) { loadFailed = true; renderAll(); }
-    showToast(error.message);
+    if (navigator.onLine) showToast(error.message);
   } finally {
     finishBoot();
   }
@@ -752,7 +756,12 @@ function updateOnlineStatus() {
   document.body.classList.toggle("is-offline", offline);
 }
 window.addEventListener("offline", updateOnlineStatus);
-window.addEventListener("online", () => { updateOnlineStatus(); refreshState(); showToast("You're back online."); });
+window.addEventListener("online", async () => {
+  updateOnlineStatus();
+  await refreshState();
+  const sent = await flushOutbox();
+  if (!sent) showToast("You're back online.");
+});
 
 async function submitAccountForm(event) {
   event.preventDefault();
@@ -1054,26 +1063,27 @@ async function submitReport(event) {
   }
   if (photoQueue.some((entry) => entry.status === "processing")) return (errorLabel.textContent = "Photos are still being prepared. Give it a second.");
 
+  const location = pendingLocation || { lat: currentArea.lat, lng: currentArea.lng };
+  const draft = {
+    title,
+    category: new FormData(form).get("category"),
+    description,
+    distance: currentArea.label,
+    lat: location.lat,
+    lng: location.lng,
+    photos: photoQueue.map((entry) => entry.dataUrl),
+    confirmNotDuplicate: confirmDuplicate,
+  };
+  // No signal? Save it on this device and send it later instead of losing it.
+  if (!navigator.onLine) return saveOfflineReport(draft, form);
+
   const humanToken = turnstileToken("report-turnstile");
   if (humanToken === "") return (errorLabel.textContent = "Complete the “I’m human” check first, or sign in.");
 
-  const location = pendingLocation || { lat: currentArea.lat, lng: currentArea.lng };
   setLoading(button, true);
   try {
-    const result = await api("/api/issues", {
-      method: "POST",
-      json: {
-        title,
-        category: new FormData(form).get("category"),
-        description,
-        distance: currentArea.label,
-        lat: location.lat,
-        lng: location.lng,
-        photos: photoQueue.map((entry) => entry.dataUrl),
-        turnstileToken: humanToken,
-        confirmNotDuplicate: confirmDuplicate,
-      },
-    });
+    const result = await api("/api/issues", { method: "POST", json: { ...draft, turnstileToken: humanToken } });
+    if (outboxResumeId) { await outboxDelete(outboxResumeId); outboxResumeId = null; updateOutboxBar(); }
     hideDuplicate();
     issues.unshift(result.issue);
     form.reset();
@@ -1094,6 +1104,7 @@ async function submitReport(event) {
     });
     showToast("Posted. Your report is on the map.");
   } catch (error) {
+    if (error.status === 0) { setLoading(button, false); return saveOfflineReport(draft, form); }
     if (error.status === 409 && error.data?.duplicate) showDuplicate(error.data.duplicate);
     else errorLabel.textContent = error.message;
   } finally {
@@ -2464,3 +2475,112 @@ $("#crash-toggle").addEventListener("change", async (event) => {
   }
   if (event.target.checked) crashLayer.addTo(heatMap);
 });
+
+/* ---------- Offline reports: saved on this device, sent when the connection returns ---------- */
+let outboxResumeId = null;
+let flushing = false;
+
+function outboxDb() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error("no-idb"));
+    const open = indexedDB.open("sidewalk-outbox", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("reports", { keyPath: "id" });
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error);
+  });
+}
+async function outboxRun(mode, fn) {
+  const db = await outboxDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("reports", mode);
+    const request = fn(tx.objectStore("reports"));
+    tx.oncomplete = () => { db.close(); resolve(request?.result); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+const outboxAll = () => outboxRun("readonly", (store) => store.getAll()).catch(() => []);
+const outboxPut = (item) => outboxRun("readwrite", (store) => store.put(item));
+const outboxDelete = (id) => outboxRun("readwrite", (store) => store.delete(id)).catch(() => {});
+
+async function saveOfflineReport(draft, form) {
+  try {
+    await outboxPut({ ...draft, id: crypto.randomUUID?.() || String(Date.now()), savedAt: Date.now() });
+  } catch {
+    $("#form-error").textContent = "You're offline, and this browser can't save reports for later. Try again when you have signal.";
+    return;
+  }
+  form.reset();
+  photoQueue = [];
+  renderPhotoQueue();
+  clearPendingLocation();
+  closeDialog("report-modal");
+  showToast("No signal, so it's saved on this device. It'll post as soon as you're back online.");
+  updateOutboxBar();
+}
+
+async function updateOutboxBar() {
+  const items = await outboxAll();
+  $("#outbox-bar").hidden = !items.length;
+  $("#outbox-text").textContent = `${items.length} report${items.length === 1 ? "" : "s"} waiting to send`;
+  $("#outbox-send").hidden = !navigator.onLine;
+}
+
+// Send saved reports. Signed-in reports go straight through; guest reports reopen in the form,
+// filled in, because they need the "I'm human" check, which only works online.
+async function flushOutbox() {
+  if (flushing || !navigator.onLine) return 0;
+  flushing = true;
+  let sent = 0;
+  try {
+    for (const item of (await outboxAll()).sort((a, b) => a.savedAt - b.savedAt)) {
+      const { id, savedAt, ...draft } = item;
+      try {
+        const result = await api("/api/issues", { method: "POST", json: draft });
+        await outboxDelete(id);
+        if (!issues.some((i) => i.id === result.issue.id)) issues.unshift(result.issue);
+        sent += 1;
+      } catch (error) {
+        if (error.status === 0) break;
+        if (error.status === 409 && error.data?.duplicate) {
+          await outboxDelete(id);
+          showToast(`"${draft.title}" was already reported nearby while you were offline, so it wasn't posted twice.`);
+          continue;
+        }
+        if (error.status === 429) break;
+        // Needs the human check, or something to fix: reopen it in the form.
+        resumeOfflineReport(item, error.status === 400 || error.status === 403 ? error.message : "");
+        break;
+      }
+    }
+  } finally {
+    flushing = false;
+  }
+  if (sent) {
+    renderAll();
+    showToast(sent === 1 ? "Back online. Your saved report was posted." : `Back online. ${sent} saved reports were posted.`);
+  }
+  updateOutboxBar();
+  return sent;
+}
+
+function resumeOfflineReport(item, problem) {
+  if ($("#report-modal").open) return;
+  outboxResumeId = item.id;
+  openReport({ title: item.title, description: item.description, category: item.category });
+  photoQueue = (item.photos || []).map((dataUrl) => ({ id: crypto.randomUUID?.() || String(Math.random()), dataUrl, status: "ready" }));
+  renderPhotoQueue();
+  if (Number.isFinite(item.lat)) setPendingLocation({ lat: item.lat, lng: item.lng }, "Spot saved while offline");
+  $("#form-error").textContent = problem && !/human/i.test(problem) ? problem : "";
+  $("#report-intro").textContent = "You saved this while you were offline. Check it over, then post it.";
+}
+
+$("#outbox-send").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  setLoading(button, true);
+  const sent = await flushOutbox();
+  setLoading(button, false);
+  if (!sent && !$("#report-modal").open) showToast("Couldn't send yet. We'll keep trying when your connection is steady.");
+});
+window.addEventListener("offline", updateOutboxBar);
+updateOutboxBar();
+setTimeout(() => flushOutbox(), 2500);
