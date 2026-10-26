@@ -30,6 +30,8 @@ const DUPLICATE_RADIUS_M = 60;
 const DUPLICATE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const ISSUE_STAGES = ['submitted', 'ai_reviewed', 'community_priority', 'sent_to_agency', 'in_progress', 'resolved'];
 const db = new DatabaseSync(process.env.SQLITE_PATH || path.join(__dirname, 'sidewalk.sqlite'));
+// Wait briefly instead of failing if the database is busy (for example during a backup).
+db.exec('PRAGMA busy_timeout = 5000');
 
 db.exec(`
   PRAGMA foreign_keys = ON;

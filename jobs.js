@@ -59,6 +59,9 @@ function createJobs(db, { tickMs = 5000 } = {}) {
           console.error(`Job ${job.kind} #${job.id} failed (attempt ${attempts}${giveUp ? ', giving up' : ''}):`, error.message);
         }
       }
+    } catch (error) {
+      // Never let a background-job hiccup (like a busy database) take the server down.
+      console.error('Job runner error:', error.message);
     } finally {
       running = false;
     }
