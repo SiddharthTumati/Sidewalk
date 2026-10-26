@@ -57,7 +57,22 @@ async function acsIncome(forClause, inClause = '') {
 // FARS fatal crashes for one county. The API wraps results as Results: [[...crashes]].
 async function farsCrashes(state, county) {
   const params = new URLSearchParams({ fromCaseYear: FARS_TO_YEAR - FARS_YEARS + 1, toCaseYear: FARS_TO_YEAR, state: Number(state), county: Number(county), format: 'json' });
-  const data = await getJson(`https://crashviewer.nhtsa.dot.gov/CrashAPI/crashes/GetCrashesByLocation?${params}`);
+  // NHTSA serves the API under /crashviewer/CrashAPI; the older /CrashAPI path now returns a web page.
+  let data;
+  let lastError;
+  for (const base of ['https://crashviewer.nhtsa.dot.gov/crashviewer/CrashAPI', 'https://crashviewer.nhtsa.dot.gov/CrashAPI']) {
+    try {
+      const response = await fetch(`${base}/crashes/GetCrashesByLocation?${params}`, { headers: { 'user-agent': USER_AGENT, accept: 'application/json' }, signal: AbortSignal.timeout(30_000) });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`NHTSA answered ${response.status}`);
+      if (!/^\s*[{[]/.test(text)) throw new Error('NHTSA returned a web page instead of data');
+      data = JSON.parse(text);
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!data) throw lastError;
   const list = Array.isArray(data.Results?.[0]) ? data.Results[0] : Array.isArray(data.Results) ? data.Results : [];
   if (list.length && !('LATITUDE' in list[0]) && !('Latitude' in list[0]) && !('latitude' in list[0])) {
     console.warn(`Impact: FARS records have no latitude field. Fields seen: ${Object.keys(list[0]).join(', ')}`);
@@ -132,16 +147,17 @@ function setupImpact({ db, jobs, router, serializeIssue }) {
   jobs.register('enrich-issue', enrichIssue);
   // Fill in reports that haven't been looked up yet (new installs, reports from before this
   // feature, or lookups that failed). A few at a time, gently, so we stay a polite API user.
-  function backfill() {
-    const retryBefore = Date.now() - 6 * 60 * 60 * 1000;
+  // On startup, retry every incomplete lookup right away (a fix or new key may have just been deployed).
+  function backfill(startup = false) {
+    const retryBefore = startup ? Date.now() : Date.now() - 6 * 60 * 60 * 1000;
     const incomeMissing = censusKey() ? `OR (tract_geoid NOT IN (SELECT geoid FROM tract_income) OR substr(tract_geoid, 1, 2) NOT IN (SELECT state FROM state_income))` : '';
     const rows = db.prepare(`SELECT id FROM issues WHERE hidden_at IS NULL AND (enrich_failed_at IS NULL OR enrich_failed_at < ?)
       AND (enriched_at IS NULL OR (enriched_at < ? AND tract_geoid IS NOT NULL AND (nearby_fatal_crashes IS NULL ${incomeMissing})))
-      LIMIT 8`).all(retryBefore, retryBefore);
+      LIMIT ${startup ? 40 : 8}`).all(retryBefore, retryBefore);
     rows.forEach((row, i) => jobs.schedule('enrich-issue', { id: row.id }, Date.now() + i * 3000));
   }
-  jobs.every('enrich-backfill', 15 * 60 * 1000, backfill);
-  setTimeout(() => { try { backfill(); } catch (error) { console.error('Impact backfill failed:', error.message); } }, Number(process.env.IMPACT_FIRST_RUN_MS) || 20_000).unref();
+  jobs.every('enrich-backfill', 15 * 60 * 1000, () => backfill());
+  setTimeout(() => { try { backfill(true); } catch (error) { console.error('Impact backfill failed:', error.message); } }, Number(process.env.IMPACT_FIRST_RUN_MS) || 20_000).unref();
 
   const median = (values) => {
     if (!values.length) return null;
