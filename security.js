@@ -108,8 +108,8 @@ const AI_SITE_WIDE = Number(process.env.AI_DAILY_LIMIT || 800);
 // Returns null if allowed, or a message if a cap is reached. `who` is a user id or IP.
 function takeAiCredit(who) {
   const windowMs = msUntilUtcMidnight();
-  if (peek('ai:site') >= AI_SITE_WIDE) return 'Sideassist has reached its daily limit for the whole site. Please try again tomorrow.';
-  if (who && peek(`ai:who:${who}`) >= AI_PER_PERSON) return 'You’ve reached today’s Sideassist limit. Please try again tomorrow.';
+  if (peek('ai:site') >= AI_SITE_WIDE) return 'Cony has answered a lot of questions today and is resting for the whole site. Please try again tomorrow.';
+  if (who && peek(`ai:who:${who}`) >= AI_PER_PERSON) return 'You’ve reached today’s limit for Cony. Please try again tomorrow.';
   hit('ai:site', AI_SITE_WIDE, windowMs);
   if (who) hit(`ai:who:${who}`, AI_PER_PERSON, windowMs);
   return null;

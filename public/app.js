@@ -1480,7 +1480,7 @@ $("#lightbox").addEventListener("touchend", (event) => {
   touchStartX = null;
 });
 
-// Sideassist
+// Cony's request writer
 $("#converter-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = $("#converter-submit");
@@ -1489,8 +1489,10 @@ $("#converter-form").addEventListener("submit", async (event) => {
   $("#converter-error").textContent = "";
   if (message.length < 10) return ($("#converter-error").textContent = "Add a bit more detail (at least 10 characters).");
   setLoading(button, true);
+  setCony("#cony-writer", "thinking");
   try {
     const { draft } = await api("/api/convert", { method: "POST", json: { message, location: place } });
+    setCony("#cony-writer", "happy");
     const categories = { "Street safety": "safety", Accessibility: "access", "Parks & public space": "parks", "Street lighting": "lighting", Other: "other" };
     $("#converter-title").textContent = draft.title;
     $("#converter-urgency").textContent = draft.urgency;
@@ -1505,6 +1507,7 @@ $("#converter-form").addEventListener("submit", async (event) => {
     if (!isDesktop()) $("#converter-result").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     $("#converter-error").textContent = error.message;
+    setCony("#cony-writer", "");
   } finally {
     setLoading(button, false);
   }
@@ -1535,7 +1538,16 @@ function addChatMessage(text, role) {
   const message = document.createElement("div");
   message.className = `chat-message ${role}-message`;
   message.textContent = text;
-  chatMessages.append(message);
+  if (role.startsWith("assistant")) {
+    // Cony's replies sit next to a small Cony.
+    const row = document.createElement("div");
+    row.className = "chat-row";
+    row.innerHTML = `<span class="cony-slot cony-sm" aria-hidden="true">${conySvg()}</span>`;
+    row.append(message);
+    chatMessages.append(row);
+  } else {
+    chatMessages.append(message);
+  }
   chatMessages.scrollTop = chatMessages.scrollHeight;
   return message;
 }
@@ -1562,13 +1574,16 @@ $("#chat-form").addEventListener("submit", async (event) => {
   chatInput.style.height = "auto";
   chatSend.disabled = true;
   const bubble = addChatMessage("", "assistant pending");
-  bubble.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span><span class="sr-only">Sidewalk is typing</span>`;
+  bubble.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span><span class="sr-only">Cony is typing</span>`;
+  setCony("#cony-head", "thinking");
   try {
     const reply = await streamChatReply(message, bubble);
     chatHistory.push({ role: "user", text: message }, { role: "model", text: reply });
+    setCony("#cony-head", "happy");
   } catch (error) {
     bubble.className = "chat-message assistant-message error-message";
     bubble.textContent = error.message;
+    setCony("#cony-head", "");
   } finally {
     chatMessages.removeAttribute("aria-busy");
     chatSend.disabled = false;
@@ -1606,6 +1621,7 @@ async function streamChatReply(message, bubble) {
       if (shown < received.length) {
         if (!started) {
           started = true;
+          setCony("#cony-head", "talking");
           bubble.className = "chat-message assistant-message streaming";
           chatMessages.setAttribute("aria-busy", "true");
         }
@@ -1653,6 +1669,40 @@ async function streamChatReply(message, bubble) {
   }
   return received;
 }
+
+/* ---------- Cony, the traffic-cone helper ---------- */
+// Drawn inline so each Cony can blink, look around, talk, and hop on its own.
+function conySvg() {
+  return `<svg class="cony" viewBox="0 0 64 64" focusable="false">
+    <ellipse class="cony-shadow" cx="32" cy="60.5" rx="21" ry="2.4"/>
+    <g class="cony-body">
+      <rect x="9" y="51" width="46" height="8" rx="3" fill="#2b3035"/>
+      <path d="M27 6.5Q32 2.5 37 6.5L50.5 52.5H13.5Z" fill="#f26b2a" stroke="#23272b" stroke-width="2.6" stroke-linejoin="round"/>
+      <path d="M23.4 19H40.6L42.9 27.5H21.1Z" fill="#fff"/>
+      <g class="cony-eyes">
+        <ellipse cx="26" cy="37.5" rx="3.8" ry="4.4" fill="#fff"/><ellipse cx="38" cy="37.5" rx="3.8" ry="4.4" fill="#fff"/>
+        <g class="cony-pupils"><circle cx="26.6" cy="38.2" r="2.1" fill="#23272b"/><circle cx="38.6" cy="38.2" r="2.1" fill="#23272b"/></g>
+      </g>
+      <circle cx="20.6" cy="44.2" r="2.1" fill="#ff9f7f"/><circle cx="43.4" cy="44.2" r="2.1" fill="#ff9f7f"/>
+      <path class="cony-smile" d="M28.4 44.6Q32 48.4 35.6 44.6" fill="none" stroke="#23272b" stroke-width="2.1" stroke-linecap="round"/>
+      <ellipse class="cony-talk" cx="32" cy="46" rx="2.6" ry="2.2" fill="#23272b"/>
+    </g>
+  </svg>`;
+}
+
+// state: "thinking" (bobs, looks around), "talking" (mouth moves), "happy" (one hop), or "" (idle).
+function setCony(selector, state) {
+  const el = typeof selector === "string" ? $(selector) : selector;
+  if (!el) return;
+  el.classList.remove("thinking", "talking", "happy");
+  if (state) {
+    void el.offsetWidth;
+    el.classList.add(state);
+  }
+  if (state === "happy") setTimeout(() => el.classList.remove("happy"), 900);
+}
+
+$$(".cony-slot").forEach((slot) => { if (!slot.firstElementChild) slot.innerHTML = conySvg(); });
 
 /* ---------- Start ---------- */
 function handleLinkParams() {
