@@ -33,6 +33,8 @@ let selectedIssueId = null;
 let currentTrackerIssue = null;
 let coordinatorConfigured = false;
 let turnstileSiteKey = null;
+let dataLoaded = false;
+let loadFailed = false;
 let confirmDuplicate = false;
 let duplicateIssueId = null;
 let flagIssueId = null;
@@ -53,6 +55,30 @@ const markerLayers = new Map();
 const trackerMarkers = new Map();
 
 /* ---------- Helpers ---------- */
+// Friendly empty and error states, and shimmering placeholders while data loads.
+function emptyState({ icon = "i-pin", title, text = "", action = "", actionLabel = "", error = false, tag = "div" }) {
+  const button = action ? `<button class="btn ${error ? "btn-primary" : "btn-ghost"} btn-small" type="button" data-action="${action}">${escapeHtml(actionLabel)}</button>` : "";
+  return `<${tag} class="empty-state rich${error ? " error" : ""}"><svg aria-hidden="true"><use href="#${icon}"/></svg><strong>${escapeHtml(title)}</strong>${text ? `<p>${escapeHtml(text)}</p>` : ""}${button}</${tag}>`;
+}
+
+function loadErrorState(tag = "div") {
+  return emptyState({ icon: "i-close", title: "Couldn't load reports", text: "Check your connection, then try again.", action: "retry-load", actionLabel: "Try again", error: true, tag });
+}
+
+function skeletons(count, kind = "card", tag = "div") {
+  const lines = kind === "card"
+    ? `<span class="sk-line w45"></span><span class="sk-line tall w80"></span><span class="sk-line w95"></span><span class="sk-line w60"></span>`
+    : `<span class="sk-line w80"></span><span class="sk-line w45"></span>`;
+  return Array.from({ length: count }, () => `<${tag} class="skeleton ${kind === "card" ? "sk-card" : "sk-row"}" aria-hidden="true">${lines}</${tag}>`).join("");
+}
+
+// While the first load is running (or failed), lists show placeholders instead of "empty".
+function notReady(container, { count = 3, kind = "card", tag = "div" } = {}) {
+  if (dataLoaded) return false;
+  container.innerHTML = loadFailed ? loadErrorState(tag) : skeletons(count, kind, tag);
+  return true;
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
@@ -198,7 +224,7 @@ function reviewBadge(issue) {
 
 function supportControl(issue, verb = "Back this") {
   if (issue.supporters >= GOAL) return `<span class="goal-label">Goal reached</span>`;
-  if (issue.userSupported) return `<button class="support-button supported" type="button" disabled>Backed</button>`;
+  if (issue.userSupported) return `<button class="support-button supported" type="button" data-supported-for="${escapeHtml(issue.id)}" disabled>Backed</button>`;
   return `<button class="support-button" type="button" data-support="${escapeHtml(issue.id)}" aria-label="${verb}: ${escapeHtml(issue.title)}">${verb}</button>`;
 }
 
@@ -250,8 +276,9 @@ function photoButton(issue, index, className = "") {
 function renderIssueList() {
   const list = $("#issue-list");
   const filtered = issues.filter((issue) => activeFilter === "all" || issue.category === activeFilter).sort(byPriority);
-  $("#result-count").textContent = `${filtered.length} ${filtered.length === 1 ? "report" : "reports"}`;
+  $("#result-count").textContent = dataLoaded ? `${filtered.length} ${filtered.length === 1 ? "report" : "reports"} showing.` : loadFailed ? "Reports couldn't load." : "Loading reports…";
   $("#filter-all-count").textContent = issues.length;
+  if (notReady(list)) return;
   list.innerHTML = filtered.map((issue) => {
     const photos = issue.photos || [];
     const thumb = photos.length
@@ -264,25 +291,29 @@ function renderIssueList() {
       <p class="desc">${escapeHtml(issue.description)}</p>
       ${thumb}
       <div class="card-foot">
-        <div class="support-meta"><span><strong>${issue.supporters}</strong> of ${GOAL} neighbors${pendingNote(issue)}</span>${laneHtml(issue)}</div>
+        <div class="support-meta"><span><strong data-count-for="${escapeHtml(issue.id)}">${issue.supporters}</strong> of ${GOAL} neighbors${pendingNote(issue)}</span>${laneHtml(issue)}</div>
         ${supportControl(issue)}
       </div>
     </article>`;
-  }).join("") || `<div class="empty-state">${activeFilter === "all" ? "No reports yet. Be the first to pin one." : "No reports of this type yet."}</div>`;
+  }).join("") || (activeFilter === "all"
+    ? emptyState({ title: "No reports here yet", text: "Spotted something broken nearby? Be the first to pin it.", action: "start-report", actionLabel: "Report an issue" })
+    : emptyState({ title: "Nothing of this type yet", text: "Try another category, or see every report.", action: "show-all", actionLabel: "Show all reports" }));
 }
 
 function renderHome() {
   $("#home-issue-count").textContent = issues.length;
   $("#home-support-count").textContent = issues.reduce((sum, issue) => sum + issue.supporters, 0);
   $("#home-priority-count").textContent = issues.filter((issue) => issue.supporters >= PRIORITY_THRESHOLD).length;
+  if (notReady($("#home-feed"), { count: 3, kind: "row" })) return;
   const latest = [...issues].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 4);
   $("#home-feed").innerHTML = latest.map((issue) => `<button class="feed-item" type="button" data-open-issue="${escapeHtml(issue.id)}">
       <span class="feed-thumb">${issue.photos?.length ? `<img src="${escapeHtml(issue.photos[0])}" alt="" loading="lazy">` : `<svg aria-hidden="true"><use href="#i-pin"/></svg>`}</span>
       <span><strong>${escapeHtml(issue.title)}</strong><small><i class="cat-dot cat-${escapeHtml(issue.category)}"></i>${escapeHtml(issue.distance)} · ${issue.supporters} backing</small></span>
-    </button>`).join("") || `<p class="empty-state">No reports yet.</p>`;
+    </button>`).join("") || emptyState({ title: "No reports yet", text: "New reports from around the Carolinas will show up here.", action: "start-report", actionLabel: "Report the first one" });
 }
 
 function renderPetitions() {
+  if (notReady($("#petition-list"))) return;
   const sorted = [...issues].sort(byPriority);
   $("#petition-list").innerHTML = sorted.map((issue) => {
     const priority = issue.supporters >= PRIORITY_THRESHOLD;
@@ -293,9 +324,9 @@ function renderPetitions() {
       <p class="desc">${escapeHtml(issue.description)}</p>
       ${photos ? `<div class="petition-photos">${photos}</div>` : ""}
       ${laneHtml(issue)}
-      <div class="row"><span class="petition-count"><strong>${issue.supporters}</strong> of ${GOAL} neighbors</span>${supportControl(issue, "Endorse")}</div>
+      <div class="row"><span class="petition-count"><strong data-count-for="${escapeHtml(issue.id)}">${issue.supporters}</strong> of ${GOAL} neighbors${pendingNote(issue)}</span>${supportControl(issue, "Endorse")}</div>
     </article>`;
-  }).join("") || `<p class="empty-state">No petitions yet. Report an issue to start one.</p>`;
+  }).join("") || emptyState({ icon: "i-hand", title: "No petitions yet", text: "Every report becomes a petition neighbors can back. Start one by reporting an issue.", action: "start-report", actionLabel: "Report an issue" });
 }
 
 function nextStageFor(issue) {
@@ -306,20 +337,24 @@ function nextStageFor(issue) {
 }
 
 function renderTracker() {
+  if (notReady($("#tracker-issues"), { count: 4, kind: "row" })) {
+    $("#tracker-detail").innerHTML = loadFailed ? "" : skeletons(1);
+    return;
+  }
   const sorted = [...issues].sort(byPriority);
   $("#tracker-count").textContent = sorted.length;
   if (!sorted.some((issue) => issue.id === currentTrackerIssue)) currentTrackerIssue = sorted[0]?.id || null;
   $("#tracker-issues").innerHTML = sorted.map((issue) => `<button class="tracker-card ${issue.id === currentTrackerIssue ? "selected" : ""}" type="button" data-track-issue="${escapeHtml(issue.id)}" aria-pressed="${issue.id === currentTrackerIssue}">
       <span class="row"><strong>${escapeHtml(issue.title)}</strong><span class="badge ${issue.status === "resolved" ? "resolved" : ""}">${escapeHtml(STAGE_LABELS[issue.status] || STAGE_LABELS.submitted)}</span></span>
       <small>${escapeHtml(issue.distance)} · ${issue.supporters} backing${issue.photos?.length ? ` · ${issue.photos.length} photo${issue.photos.length > 1 ? "s" : ""}` : ""}</small>
-    </button>`).join("") || `<p class="empty-state">Nothing to track yet.</p>`;
+    </button>`).join("") || emptyState({ icon: "i-track", title: "Nothing to track yet", text: "Once someone reports an issue, you can follow it here from pinned to fixed." });
   renderTrackerDetail(issues.find((issue) => issue.id === currentTrackerIssue));
 }
 
 function renderTrackerDetail(issue) {
   const detail = $("#tracker-detail");
   if (!issue) {
-    detail.innerHTML = `<p class="empty-state">Choose a report to see its timeline.</p>`;
+    detail.innerHTML = emptyState({ icon: "i-track", title: "Pick a report", text: "Choose a report to see its timeline." });
     return;
   }
   const currentIndex = Math.max(0, STAGE_ORDER.indexOf(issue.status || "submitted"));
@@ -361,6 +396,7 @@ function renderHotspots() {
     spot.backing += issue.supporters;
     groups.set(issue.distance, spot);
   });
+  if (notReady($("#hotspot-list"), { count: 3, kind: "row", tag: "li" })) return;
   const sorted = [...groups.values()].sort((a, b) => b.backing - a.backing);
   const max = Math.max(1, ...sorted.map((spot) => spot.backing));
   $("#hotspot-count").textContent = sorted.length;
@@ -368,7 +404,7 @@ function renderHotspots() {
       <strong>${escapeHtml(spot.location)}</strong><span class="count-pill">${spot.backing}</span>
       <small>${spot.reports} report${spot.reports === 1 ? "" : "s"}, ${spot.backing} neighbors backing</small>
       <span class="heat-bar" style="width:${Math.max(8, Math.round((spot.backing / max) * 100))}%"></span>
-    </li>`).join("") || `<li class="empty-state">Hotspots appear as reports come in.</li>`;
+    </li>`).join("") || emptyState({ icon: "i-heat", title: "No hotspots yet", text: "Hotspots appear as reports come in.", tag: "li" });
 }
 
 /* ---------- Maps ---------- */
@@ -478,7 +514,15 @@ function selectIssue(id, { fromMap = false } = {}) {
 function navigateTo(page, updateUrl = true) {
   currentPage = PAGES.includes(page) ? page : "home";
   document.body.dataset.page = currentPage;
-  $$("[data-page-section]").forEach((section) => { section.hidden = section.dataset.pageSection !== currentPage; });
+  $$("[data-page-section]").forEach((section) => {
+    const show = section.dataset.pageSection === currentPage;
+    if (show && section.hidden) {
+      section.classList.remove("page-enter");
+      void section.offsetWidth; // restart the animation
+      section.classList.add("page-enter");
+    }
+    section.hidden = !show;
+  });
   $$(".nav-link, .tab").forEach((button) => {
     const active = button.dataset.pageTarget === currentPage;
     button.classList.toggle("active", active);
@@ -608,11 +652,43 @@ async function refreshState() {
     coordinatorConfigured = Boolean(result.coordinatorConfigured);
     setActiveUser(auth.user);
     issues = result.issues;
+    const firstLoad = !dataLoaded;
+    dataLoaded = true;
+    loadFailed = false;
+    if (firstLoad) playFirstPaint();
     renderAll();
   } catch (error) {
+    if (!dataLoaded) { loadFailed = true; renderAll(); }
     showToast(error.message);
+  } finally {
+    finishBoot();
   }
 }
+
+// Fade the loading screen out once the first load is done (a short minimum avoids a flash).
+const bootStarted = performance.now();
+// On a slow connection, don't hold the loading screen for long; placeholders take over.
+setTimeout(() => finishBoot(), 1100);
+function finishBoot() {
+  const boot = $("#boot");
+  if (!boot || boot.classList.contains("done")) return;
+  setTimeout(() => boot.classList.add("done"), Math.max(0, 450 - (performance.now() - bootStarted)));
+  setTimeout(() => boot.remove(), 1200);
+}
+
+// Cards rise in and progress bars fill on the first load only, not on every update.
+function playFirstPaint() {
+  document.body.classList.add("first-paint");
+  setTimeout(() => document.body.classList.remove("first-paint"), 1600);
+}
+
+function updateOnlineStatus() {
+  const offline = !navigator.onLine;
+  $("#offline-bar").hidden = !offline;
+  document.body.classList.toggle("is-offline", offline);
+}
+window.addEventListener("offline", updateOnlineStatus);
+window.addEventListener("online", () => { updateOnlineStatus(); refreshState(); showToast("You're back online."); });
 
 async function submitAccountForm(event) {
   event.preventDefault();
@@ -709,6 +785,8 @@ async function handleSupport(id, button) {
     issue.isSubscribed = true;
     if (result.priorityReached) issue.status = "community_priority";
     renderAll();
+    $$(`[data-count-for="${CSS.escape(id)}"]`).forEach((el) => el.classList.add("bump"));
+    $$(`[data-supported-for="${CSS.escape(id)}"]`).forEach((el) => el.classList.add("just-backed"));
     if (result.pending) showToast("Thanks! New accounts' endorsements count after one day. It keeps fake accounts out.");
     else if (result.underReview) showToast("Thanks! This report is under review, so its count is paused for now.");
     else showToast(result.priorityReached ? `That's ${result.count}. This is now a neighborhood priority.` : `You're in. ${result.count} neighbors are backing this.`);
@@ -1158,6 +1236,12 @@ document.addEventListener("click", (event) => {
   const nav = target.closest("[data-page-target]");
   if (nav) { event.preventDefault(); return navigateTo(nav.dataset.pageTarget); }
   if (target.closest('[data-action="start-report"]')) return openReport();
+  if (target.closest('[data-action="retry-load"]')) { loadFailed = false; renderAll(); return refreshState(); }
+  if (target.closest('[data-action="show-all"]')) {
+    activeFilter = "all";
+    $$("[data-filter]").forEach((chip) => chip.classList.toggle("active", chip.dataset.filter === "all"));
+    return renderAll();
+  }
   const close = target.closest("[data-close]");
   if (close) return closeDialog(close.dataset.close);
   const flag = target.closest("[data-flag-issue]");
@@ -1477,7 +1561,8 @@ $("#chat-form").addEventListener("submit", async (event) => {
   chatInput.value = "";
   chatInput.style.height = "auto";
   chatSend.disabled = true;
-  const pending = addChatMessage("Thinking…", "assistant pending");
+  const pending = addChatMessage("", "assistant pending");
+  pending.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span><span class="sr-only">Sidewalk is typing</span>`;
   try {
     const data = await api("/api/chat", { method: "POST", json: { message, history: chatHistory.slice(-12) } });
     pending.remove();
@@ -1510,6 +1595,8 @@ updateAreaLabels();
 renderProfileButton();
 renderPhotoQueue();
 navigateTo(currentPage, false);
+updateOnlineStatus();
+renderAll();
 refreshState().then(handleLinkParams);
 setInterval(async () => {
   if (currentPage !== "tracker" || document.hidden) return;

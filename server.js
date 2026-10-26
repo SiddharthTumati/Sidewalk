@@ -122,11 +122,19 @@ app.post('/api/chat', aiBurst('chat', 20), aiDailyCap, async (req, res) => {
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
+// Any other unknown page gets the "road closed" page.
+app.use((req, res) => {
+    res.status(404);
+    if (req.accepts('html')) return res.sendFile(path.join(__dirname, 'public', '404.html'));
+    res.type('text').send('Not found');
+});
+
 app.use((error, req, res, next) => {
     if (error.type === 'entity.too.large') return res.status(413).json({ error: 'Request is too large.' });
     if (error instanceof SyntaxError && error.status === 400 && 'body' in error) return res.status(400).json({ error: 'Request must contain valid JSON.' });
     console.error(`Unhandled error on ${req.method} ${req.path}:`, error);
     if (res.headersSent) return next(error);
+    if (!req.path.startsWith('/api') && req.accepts('html')) return res.status(500).sendFile(path.join(__dirname, 'public', '500.html'));
     res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
 });
 

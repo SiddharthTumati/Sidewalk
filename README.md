@@ -36,7 +36,8 @@ Small infrastructure problems are easy to notice and hard to get fixed. A pothol
 | **Accounts** | Email verification, resend link, forgot/reset password, 8-character minimum, unsubscribe links in every email |
 | **Anti-abuse** | Cloudflare Turnstile bot check, throwaway-email blocking, rate limits and daily AI caps, endorsements that only count once an account is a day old, burst detection for fake accounts on one network, duplicate-report detection, link and profanity filter |
 | **Moderation** | "Flag this report" for neighbors (3 flags hides a report), and coordinator tools to hide, restore, delete, and suspend the person or network behind a report |
-| **Design** | Street-marking look (asphalt and road-paint yellow), light and dark mode, bottom tab bar and slide-up sheets on phones, top nav on desktop |
+| **Design** | Street-marking look (asphalt and road-paint yellow), light and dark mode, bottom tab bar with a raised Sideassist button and slide-up sheets on phones, top nav on desktop, branded loading screen, skeleton placeholders, friendly empty and error states, offline banner, "road closed" 404 page |
+| **Accessibility** | Passes automated axe checks (WCAG 2.1 AA) on every page and dialog in light and dark mode; skip link, keyboard-friendly lists, visible focus, screen-reader labels, reduced-motion support |
 
 ## How it works
 

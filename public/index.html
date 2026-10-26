@@ -40,6 +40,16 @@
 			<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
 		</svg>
 
+		<div class="boot" id="boot" aria-hidden="true">
+			<div class="boot-inner">
+				<span class="boot-mark"><i></i><i></i><i></i></span>
+				<span class="boot-word">sidewalk</span>
+				<span class="boot-road"><i></i></span>
+				<span class="boot-note">Loading your neighborhood…</span>
+			</div>
+		</div>
+		<div class="offline-bar" id="offline-bar" role="status" hidden>You're offline. Changes won't save until you reconnect.</div>
+
 		<a class="skip-link" href="#main">Skip to content</a>
 
 		<header class="topbar">
@@ -55,15 +65,15 @@
 				<button class="nav-link" type="button" data-page-target="heatmap"><svg><use href="#i-heat"/></svg><span>Heatmap</span></button>
 			</nav>
 			<div class="topbar-right">
-				<button class="area-button" id="area-button" type="button" aria-label="Change area">
-					<svg aria-hidden="true"><use href="#i-pin"/></svg><span id="selected-area-label">The Carolinas</span>
+				<button class="area-button" id="area-button" type="button">
+					<svg aria-hidden="true"><use href="#i-pin"/></svg><span class="sr-only">Change area. Current area: </span><span id="selected-area-label">The Carolinas</span>
 				</button>
 				<button class="avatar" id="profile-button" type="button" aria-label="Sign in or create an account"><span id="profile-initials">Sign in</span></button>
 			</div>
 		</header>
 		<div class="curb" aria-hidden="true"></div>
 
-		<div id="main">
+		<main id="main">
 		<section class="page-view home-page" id="home-page" data-page-section="home">
 			<div class="home-hero">
 				<div class="home-copy">
@@ -106,7 +116,7 @@
 			</footer>
 		</section>
 
-		<main class="workspace page-view" id="report-page" data-page-section="report" hidden>
+		<section class="workspace page-view" id="report-page" data-page-section="report" hidden>
 			<section class="map-area" aria-label="Map of neighborhood issues">
 				<div id="map" role="application" aria-label="Interactive neighborhood map"></div>
 				<div class="map-controls">
@@ -138,7 +148,7 @@
 			<aside class="sidebar" aria-label="Neighborhood issues">
 				<div class="sidebar-head">
 					<h1 class="sidebar-title">Reports near <span id="sidebar-area">The Carolinas</span></h1>
-					<p class="sidebar-sub"><span id="result-count">0</span> showing. Tap a report to find it on the map.</p>
+					<p class="sidebar-sub"><span id="result-count">Loading reports…</span> Tap a report to find it on the map.</p>
 				</div>
 				<div class="filter-tabs" role="group" aria-label="Filter by type">
 					<button class="chip active" type="button" data-filter="all">All <span id="filter-all-count">0</span></button>
@@ -148,13 +158,14 @@
 					<button class="chip" type="button" data-filter="parks"><i class="cat-dot cat-parks"></i>Parks</button>
 					<button class="chip" type="button" data-filter="other"><i class="cat-dot cat-other"></i>Other</button>
 				</div>
-				<section class="issue-list" id="issue-list" aria-live="polite" aria-label="Community issues"></section>
+				<h2 class="sr-only">Report list</h2>
+					<section class="issue-list" id="issue-list" aria-live="polite" aria-label="Community issues"></section>
 				<div class="sidebar-foot">
 					<button class="btn btn-primary btn-block" id="report-button" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Report an issue</button>
 				</div>
 			</aside>
 			<button class="fab" id="report-fab" type="button" data-action="start-report"><svg aria-hidden="true"><use href="#i-plus"/></svg>Report</button>
-		</main>
+		</section>
 
 		<section class="page-view tool-page" id="converter-page" data-page-section="converter" hidden>
 			<header class="page-head">
@@ -238,6 +249,7 @@
 				<h1 class="display-sm">Petitions</h1>
 				<p>Back the issues you want fixed. At 10 endorsements a report is flagged as a neighborhood priority; at 50 it's ready to bring to city council.</p>
 			</header>
+			<h2 class="sr-only">Open petitions</h2>
 			<section class="petition-list" id="petition-list" aria-live="polite" aria-label="Petitions"></section>
 		</section>
 
@@ -257,7 +269,7 @@
 				</aside>
 			</div>
 		</section>
-		</div>
+		</main>
 
 		<nav class="tabbar" aria-label="Main">
 			<button class="tab" type="button" data-page-target="report"><svg><use href="#i-map"/></svg><span>Map</span></button>
@@ -506,7 +518,7 @@
 				</form>
 				<p class="chat-disclaimer">AI can be wrong. Confirm details with your local agency. <a href="/ai" target="_blank" rel="noopener">How Sidewalk uses AI</a></p>
 			</div>
-			<button class="chat-launcher" id="chat-launcher" type="button" aria-expanded="false" aria-controls="chat-panel"><svg aria-hidden="true"><use href="#i-chat"/></svg><span>Ask Sidewalk</span></button>
+			<button class="chat-launcher" id="chat-launcher" type="button" aria-expanded="false" aria-controls="chat-panel" aria-label="Ask Sidewalk"><svg aria-hidden="true"><use href="#i-chat"/></svg><span>Ask Sidewalk</span></button>
 		</section>
 	</body>
 </html>

@@ -20,3 +20,11 @@ body.legal-page { padding-bottom: 0; }
 .legal-contact { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--line); }
 .legal-contact h2 { margin-top: 0; }
 .legal-footer { padding: 0 16px 36px; color: var(--muted); font-size: 14px; text-align: center; }
+
+/* Error pages (404, 500) */
+.error-wrap { display: grid; justify-items: center; gap: 10px; width: min(100% - 32px, 560px); margin: clamp(32px, 10vh, 90px) auto 48px; text-align: center; }
+.error-art { width: min(100%, 300px); height: auto; margin-bottom: 8px; animation: rise .5s cubic-bezier(.2,.8,.2,1) both; }
+.error-code { color: var(--muted); font: 800 14px/1 var(--display); letter-spacing: .14em; }
+.error-wrap h1 { font: 850 clamp(30px, 7vw, 44px)/1.05 var(--display); font-stretch: 112%; letter-spacing: -.015em; }
+.error-text { max-width: 42ch; color: var(--muted); font-size: 17px; line-height: 1.55; }
+.error-actions { justify-content: center; margin-top: 10px; }
