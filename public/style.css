@@ -807,3 +807,46 @@ body[data-page=home] .chat-widget, body[data-page=converter] .chat-widget { disp
 @keyframes cony-sparkle { 50% { opacity: .35; transform: scale(1.08); } }
 .mood-line { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; color: var(--muted); font-size: 14.5px; }
 @media (prefers-reduced-motion: reduce) { #cony-voice.recording svg, .mood-party .cony-party { animation: none; } }
+
+/* ---------- Impact page ---------- */
+.impact-block { margin-top: 28px; }
+.impact-block:first-of-type { margin-top: 8px; }
+.impact-block .list-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.impact-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0 14px; }
+.impact-stat { display: grid; gap: 4px; padding: 14px 16px; border-radius: var(--radius-m); background: var(--surface); }
+.impact-stat strong { font: 850 30px/1.05 var(--display); }
+.impact-stat strong small { color: var(--muted); font: 600 14px var(--body); }
+.impact-stat span { color: var(--muted); font-size: 13.5px; font-weight: 600; }
+.impact-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+.impact-card { min-width: 0; padding: 16px; border-radius: var(--radius-m); background: var(--surface); }
+.impact-card h3 { margin-bottom: 10px; font: 800 16px/1.2 var(--display); }
+.table-wrap { overflow-x: auto; }
+.impact-table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.impact-table th, .impact-table td { padding: 8px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+.impact-table thead th { color: var(--muted); font-size: 12.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.impact-table tbody th { font-weight: 700; }
+.impact-table .muted, .impact-oldest .muted { color: var(--muted); }
+.impact-oldest { display: grid; gap: 10px; margin: 0; padding-left: 20px; }
+.impact-oldest li { display: grid; gap: 2px; }
+.impact-oldest small { color: var(--muted); }
+.impact-oldest .text-link { justify-self: start; text-align: left; font-weight: 700; }
+.switch-row { display: inline-flex; align-items: center; gap: 8px; font-size: 14.5px; font-weight: 600; cursor: pointer; }
+.switch-row input { width: 18px; height: 18px; accent-color: var(--danger); }
+.crash-key { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; }
+.crash-key i { width: 11px; height: 11px; border: 1.5px solid #23272b; border-radius: 50%; background: #b3261e; }
+.safety-summary { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 12px; }
+.safety-summary strong { color: var(--danger); font: 850 34px/1 var(--display); }
+.equity-bars { display: grid; gap: 12px; margin-top: 10px; }
+.equity-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 14px; align-items: center; padding: 14px 16px; border-radius: var(--radius-m); background: var(--surface); }
+.equity-label { display: grid; gap: 2px; }
+.equity-label small, .equity-figures small, .equity-figures span { color: var(--muted); font-size: 13.5px; }
+.equity-figures { display: grid; gap: 6px; }
+.equity-bar { height: 12px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.equity-bar i { display: block; height: 100%; border-radius: inherit; background: var(--paint); }
+.small-print { margin-top: 14px; font-size: 12.5px; }
+.badge.danger { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.notice.danger-note { margin-top: 12px; background: color-mix(in srgb, var(--danger) 10%, var(--surface)); border-left: 4px solid var(--danger); }
+@media (max-width: 760px) {
+  .impact-stats { grid-template-columns: repeat(2, 1fr); }
+  .impact-grid, .equity-row { grid-template-columns: 1fr; }
+}

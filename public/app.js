@@ -296,7 +296,7 @@ function renderIssueList() {
     const thumb = photos.length
       ? `<div class="card-photos">${photoButton(issue, 0, "card-photo")}${photos.length > 1 ? `<span class="more">+${photos.length - 1}</span>` : ""}</button></div>`
       : "";
-    const priority = issue.status === "resolved" ? `<span class="badge resolved">Fixed</span>` : (issue.supporters >= PRIORITY_THRESHOLD ? `<span class="badge priority">Priority</span>` : "") + reviewBadge(issue);
+    const priority = issue.safety && issue.status !== "resolved" ? `<span class="badge danger">Crash hot spot</span>` : issue.status === "resolved" ? `<span class="badge resolved">Fixed</span>` : (issue.supporters >= PRIORITY_THRESHOLD ? `<span class="badge priority">Priority</span>` : "") + reviewBadge(issue);
     return `<article class="issue-card ${issue.id === selectedIssueId ? "selected" : ""}" data-issue="${escapeHtml(issue.id)}" tabindex="0">
       <div class="card-meta"><span class="cat"><i class="cat-dot cat-${escapeHtml(issue.category)}"></i>${escapeHtml(issue.categoryLabel)}</span><span>${escapeHtml(issue.distance)}</span>${priority}</div>
       <h3>${escapeHtml(issue.title)}</h3>
@@ -392,6 +392,7 @@ function renderTrackerDetail(issue) {
     ${gallery}
     <ol class="timeline" aria-label="Progress">${steps}</ol>
     ${staleNote}
+    ${issue.safety ? `<div class="notice danger-note"><strong>Safety hot spot.</strong> ${issue.safety.fatalCrashes} fatal crash${issue.safety.fatalCrashes === 1 ? "" : "es"} (${issue.safety.fatalities} ${issue.safety.fatalities === 1 ? "death" : "deaths"}) happened within ${issue.safety.radiusMeters} m of this spot from ${issue.safety.fromYear} to ${issue.safety.toYear}, according to federal crash records (NHTSA FARS).</div>` : ""}
     ${!issue.stale && issue.status === "in_progress" ? `<p class="mood-line"><span class="cony-slot cony-sm mood-working" aria-hidden="true">${conySvg()}</span>Crews are on it. Cony will cheer when it's fixed.</p>` : ""}
     <div class="responsible" id="responsible-${escapeHtml(issue.id)}"></div>
     ${issue.underReview ? `<p class="notice warn">Under review: a coordinator is checking this report's endorsements before it can move forward.</p>` : ""}
@@ -589,6 +590,7 @@ function navigateTo(page, updateUrl = true) {
     if (!map) initMap(); else requestAnimationFrame(() => map.invalidateSize());
   }
   if (currentPage === "staff") loadStaffQueue();
+  if (currentPage === "heatmap") loadImpact();
   if (currentPage === "tracker" && window.L) {
     if (!trackerMap) trackerMap = createSecondaryMap("tracker-map");
     requestAnimationFrame(() => { trackerMap.invalidateSize(); renderSecondaryMaps(); });
@@ -2375,3 +2377,90 @@ function resetConyAssist() {
   conyStatus("Add a photo, say what's wrong, or type it in any language. Cony writes it up in English for you to check.");
   updateConyPhotoButton();
 }
+
+/* ---------- Impact: scoreboard, safety check, fair share ---------- */
+let impactLoadedAt = 0;
+let crashLayer = null;
+
+const pct = (value) => (value == null ? "–" : `${Math.round(value * 100)}%`);
+const daysText = (value) => (value == null ? "–" : value < 1 ? "under a day" : `${value} day${value === 1 ? "" : "s"}`);
+
+async function loadImpact() {
+  if (Date.now() - impactLoadedAt < 60_000) return;
+  if (!impactLoadedAt) $("#impact-stats").innerHTML = skeletons(3, "row", "div");
+  try {
+    const data = await api("/api/impact");
+    impactLoadedAt = Date.now();
+    renderImpact(data);
+  } catch (error) {
+    $("#impact-stats").innerHTML = emptyState({ icon: "i-close", title: "Couldn't load the scoreboard", text: error.message, error: true });
+  }
+}
+
+function renderImpact(data) {
+  const o = data.overall;
+  $("#impact-stats").innerHTML = [
+    ["Reports", o.reports],
+    ["Fixed", `${o.fixed} <small>(${pct(o.fixRate)})</small>`],
+    ["Typical time to fix", daysText(o.medianDaysToFix)],
+    ["Still open", o.open],
+  ].map(([label, value]) => `<div class="impact-stat"><strong>${value}</strong><span>${label}</span></div>`).join("");
+
+  $("#impact-areas tbody").innerHTML = data.byArea.map((a) => `<tr><th scope="row">${escapeHtml(a.area)}</th><td>${a.reports}</td><td>${a.fixed} <span class="muted">(${pct(a.fixRate)})</span></td><td>${daysText(a.medianDaysToFix)}</td></tr>`).join("")
+    || `<tr><td colspan="4">No reports yet.</td></tr>`;
+
+  $("#impact-oldest").innerHTML = data.oldestOpen.map((r) => `<li><button class="text-link" type="button" data-impact-open="${escapeHtml(r.id)}">${escapeHtml(r.title)}</button><small>${escapeHtml(r.area)} · open ${r.daysOpen} day${r.daysOpen === 1 ? "" : "s"} · ${escapeHtml(STAGE_LABELS[r.status] || STAGE_LABELS.submitted)}</small></li>`).join("")
+    || `<li class="muted">Nothing open. Every report has been fixed.</li>`;
+
+  const sf = data.safety;
+  $("#impact-safety").innerHTML = !sf.lookedUp
+    ? `<p class="hint">Checking reports against federal crash records. This takes a few minutes after a report is posted.</p>`
+    : `<div class="safety-summary"><strong>${sf.reportsNearFatalCrashes}</strong><span>of ${sf.lookedUp} checked report${sf.lookedUp === 1 ? " is" : "s are"} within ${sf.radiusMeters} m of a fatal crash (${sf.fromYear} to ${sf.toYear}).</span></div>
+      ${sf.hotspots.length ? `<ol class="impact-oldest">${sf.hotspots.map((h) => `<li><button class="text-link" type="button" data-impact-open="${escapeHtml(h.id)}">${escapeHtml(h.title)}</button><small>${escapeHtml(h.area)} · ${h.crashes} fatal crash${h.crashes === 1 ? "" : "es"} nearby, ${h.fatalities} ${h.fatalities === 1 ? "death" : "deaths"}</small></li>`).join("")}</ol>` : ""}
+      <p class="hint">These reports deserve a closer look: a hazard near a place where people have died in crashes. Fatal crashes only; the records don't include injury crashes.</p>`;
+
+  const eq = data.equity;
+  const maxDays = Math.max(1, ...eq.bands.map((b) => b.medianDaysToFix || 0));
+  $("#impact-equity").innerHTML = eq.covered
+    ? eq.bands.map((b) => `<div class="equity-row">
+        <div class="equity-label"><strong>${escapeHtml(b.label)}</strong><small>${escapeHtml(b.note)}</small></div>
+        <div class="equity-figures">
+          <span>${b.reports} report${b.reports === 1 ? "" : "s"} · ${pct(b.fixRate)} fixed</span>
+          <div class="equity-bar" role="img" aria-label="${escapeHtml(b.label)}: typical time to fix ${daysText(b.medianDaysToFix)}"><i style="width:${b.medianDaysToFix == null ? 0 : Math.max(4, (b.medianDaysToFix / maxDays) * 100)}%"></i></div>
+          <small>Typical time to fix: ${daysText(b.medianDaysToFix)}</small>
+        </div>
+      </div>`).join("") + `<p class="hint">${eq.covered} of ${eq.total} reports matched to a census tract so far. With only a few fixed reports, differences can be chance; look for patterns that last.</p>`
+    : eq.incomeDataOn
+      ? `<p class="hint">Matching reports to census tracts. Check back in a few minutes.</p>`
+      : `<p class="hint">Income data is off on this server. An admin can turn it on by adding a free Census API key.</p>`;
+
+  $("#impact-sources").innerHTML = `Sources: Sidewalk reports; U.S. Census Bureau geocoder and American Community Survey ${escapeHtml(eq.acsYear)} 5-year estimates (median household income); NHTSA Fatality Analysis Reporting System. Areas are census tracts, not neighborhoods, and income is an estimate.`;
+}
+
+document.addEventListener("click", (event) => {
+  const open = event.target.closest?.("[data-impact-open]");
+  if (!open) return;
+  currentTrackerIssue = open.dataset.impactOpen;
+  navigateTo("tracker");
+  renderTracker();
+});
+
+$("#crash-toggle").addEventListener("change", async (event) => {
+  const on = event.target.checked;
+  $("#crash-key").hidden = !on;
+  if (!heatMap) return;
+  if (!on) { if (crashLayer) heatMap.removeLayer(crashLayer); return; }
+  if (!crashLayer) {
+    try {
+      const data = await api("/api/impact/crashes");
+      crashLayer = L.layerGroup(data.crashes.map(([lat, lng, year, fatals]) => L.circleMarker([lat, lng], { radius: 4 + Math.min(fatals, 4), weight: 1.5, color: "#23272b", fillColor: "#b3261e", fillOpacity: 0.85 })
+        .bindTooltip(`Fatal crash${year ? `, ${year}` : ""}: ${fatals} ${fatals === 1 ? "death" : "deaths"}`)));
+      if (!data.crashes.length) showToast("No crash records loaded yet. They load in the background after reports are checked.");
+    } catch (error) {
+      event.target.checked = false;
+      $("#crash-key").hidden = true;
+      return showToast(error.message);
+    }
+  }
+  if (event.target.checked) crashLayer.addTo(heatMap);
+});

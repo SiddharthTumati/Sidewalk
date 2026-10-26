@@ -72,7 +72,7 @@
 				<button class="nav-link" type="button" data-page-target="tracker"><svg><use href="#i-track"/></svg><span>Tracker</span></button>
 				<button class="nav-link" type="button" data-page-target="converter"><span class="cony-slot" aria-hidden="true"></span><span>Cony</span></button>
 				<button class="nav-link" type="button" data-page-target="petitions"><svg><use href="#i-hand"/></svg><span>Petitions</span></button>
-				<button class="nav-link" type="button" data-page-target="heatmap"><svg><use href="#i-heat"/></svg><span>Heatmap</span></button>
+				<button class="nav-link" type="button" data-page-target="heatmap"><svg><use href="#i-heat"/></svg><span>Impact</span></button>
 				<button class="nav-link staff-only" type="button" data-page-target="staff" hidden><svg><use href="#i-track"/></svg><span>Staff</span></button>
 			</nav>
 			<div class="topbar-right">
@@ -294,19 +294,53 @@
 
 		<section class="page-view tool-page" id="heatmap-page" data-page-section="heatmap" hidden>
 			<header class="page-head">
-				<h1 class="display-sm">Heatmap</h1>
-				<p>Warmer areas have more reports and more neighbors backing them. It's a picture of community attention, not an official safety rating.</p>
+				<h1 class="display-sm">Impact</h1>
+				<p>Where neighbors are speaking up, how fast problems get fixed, and whether every part of town gets the same attention.</p>
 			</header>
+
+			<section class="impact-block" aria-labelledby="score-title">
+				<div class="list-head"><h2 id="score-title">Scoreboard</h2></div>
+				<div class="impact-stats" id="impact-stats" aria-live="polite"></div>
+				<div class="impact-grid">
+					<div class="impact-card">
+						<h3>By area</h3>
+						<div class="table-wrap"><table class="impact-table" id="impact-areas"><caption class="sr-only">Reports, fix rate, and typical days to fix by area</caption><thead><tr><th scope="col">Area</th><th scope="col">Reports</th><th scope="col">Fixed</th><th scope="col">Typical days to fix</th></tr></thead><tbody></tbody></table></div>
+					</div>
+					<div class="impact-card">
+						<h3>Waiting the longest</h3>
+						<ol class="impact-oldest" id="impact-oldest"></ol>
+					</div>
+				</div>
+			</section>
+
+			<section class="impact-block" aria-labelledby="heat-title">
+				<div class="list-head"><h2 id="heat-title">Heatmap</h2>
+					<label class="switch-row"><input type="checkbox" id="crash-toggle"> <span>Show fatal crashes</span></label>
+				</div>
+				<p class="hint">Warmer areas have more reports and more neighbors backing them. It's a picture of community attention, not an official safety rating.</p>
 			<div class="heatmap-layout">
 				<div class="heatmap-map-wrap">
 					<div id="heat-map" class="secondary-map" role="application" aria-label="Heatmap of reports"></div>
-					<div class="heat-legend"><span>Less</span><i class="heat-ramp"></i><span>More</span></div>
+					<div class="heat-legend"><span>Less</span><i class="heat-ramp"></i><span>More</span><span class="crash-key" id="crash-key" hidden><i></i>Fatal crash</span></div>
 				</div>
 				<aside class="heatmap-sidebar">
 					<div class="list-head"><h2>Hotspots</h2><span class="count-pill" id="hotspot-count">0</span></div>
 					<ol id="hotspot-list" class="hotspot-list"></ol>
 				</aside>
 			</div>
+			</section>
+
+			<section class="impact-block" aria-labelledby="safety-title">
+				<div class="list-head"><h2 id="safety-title">Safety check</h2></div>
+				<div class="impact-card" id="impact-safety" aria-live="polite"></div>
+			</section>
+
+			<section class="impact-block" aria-labelledby="equity-title">
+				<div class="list-head"><h2 id="equity-title">Fair share</h2></div>
+				<p class="hint">Does every neighborhood get fixes at the same pace? Each report is matched to its census tract and compared with the state's typical household income.</p>
+				<div class="equity-bars" id="impact-equity" aria-live="polite"></div>
+				<p class="hint small-print" id="impact-sources"></p>
+			</section>
 		</section>
 
 		<section class="page-view tool-page" id="staff-page" data-page-section="staff" hidden>
@@ -330,7 +364,7 @@
 			<button class="tab" type="button" data-page-target="tracker"><svg><use href="#i-track"/></svg><span>Tracker</span></button>
 			<button class="tab" type="button" data-page-target="converter"><span class="cony-slot" aria-hidden="true"></span><span>Cony</span></button>
 			<button class="tab" type="button" data-page-target="petitions"><svg><use href="#i-hand"/></svg><span>Petitions</span></button>
-			<button class="tab" type="button" data-page-target="heatmap"><svg><use href="#i-heat"/></svg><span>Heatmap</span></button>
+			<button class="tab" type="button" data-page-target="heatmap"><svg><use href="#i-heat"/></svg><span>Impact</span></button>
 		</nav>
 
 		<!-- Report an issue -->

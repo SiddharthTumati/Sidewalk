@@ -7,6 +7,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { limit, takeAiCredit, adminLocked, recordAdminFailure, clearAdminFailures, clientIp, cleanText, inCarolinas } = require('./security');
 const { stripPhotoMetadata } = require('./photometa');
 const { createJobs } = require('./jobs');
+const { setupImpact } = require('./impact');
 const { createNotifier } = require('./notify');
 const QRCode = require('qrcode');
 const { requireHuman, turnstileSiteKey, isThrowawayEmail, checkPublicText, setNetworkKey, networkId } = require('./abuse');
@@ -294,6 +295,8 @@ async function sendWithBrevo({ to, subject, text }) {
 const mailer = hasBrevo ? { sendMail: sendWithBrevo } : smtpTransport;
 
 const jobs = createJobs(db);
+// Census tract, income, and nearby fatal crashes for each report (see impact.js).
+const impact = setupImpact({ db, jobs, router });
 const notifier = createNotifier({ db, jobs, sendEmail: (m) => sendEmail(m), emailReady: () => Boolean(mailer), hashToken: (t) => hashToken(t), appUrl: () => appUrl(), crypto });
 
 function sendEmail(message) {
@@ -574,6 +577,7 @@ function serializeIssue(row, userId) {
       .map((photo) => `/api/photos/${photo.id}`),
     stale: STALE_STAGES.includes(row.status) && Date.now() - (row.status_updated_at || row.created_at) > STALE_MS,
     daysSinceUpdate: Math.floor((Date.now() - (row.status_updated_at || row.created_at)) / 86400000),
+    safety: impact.safetyFor(row),
     createdAt: row.created_at,
     userSupported,
     isSubscribed,
@@ -991,6 +995,7 @@ router.post('/issues', reportHourly, reportDaily, requireHuman((req) => !req.use
     .run(id, 'submitted', 'Issue submitted to the community map.', createdAt);
   if (req.user) db.prepare('INSERT INTO supports (issue_id, user_id, created_at, network) VALUES (?, ?, ?, ?)').run(id, req.user.id, Date.now(), network);
   if (req.user) db.prepare('INSERT OR IGNORE INTO issue_subscriptions (issue_id, user_id, created_at) VALUES (?, ?, ?)').run(id, req.user.id, createdAt);
+  impact.queue(id);
   const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(id);
   res.status(201).json({ issue: serializeIssue(issue, req.user?.id) });
   if (req.app.locals.ai) setImmediate(() => reviewIssueWithAi(id, req.app.locals.ai));

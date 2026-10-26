@@ -32,6 +32,7 @@ Small infrastructure problems are easy to notice and hard to get fixed. A pothol
 | **Reports** | Up to 4 photos (camera, picker, drag-and-drop, or paste), compressed on the device before upload, full-screen photo viewer |
 | **Petitions** | One endorsement per verified account; thresholds at 10 (priority) and 50 (council-ready); milestone emails |
 | **Tracker** | Six-stage status timeline per issue; before-and-after photos when a fix is done, a "Fixed!" banner, and a best guess at who maintains the spot (city or state DOT) with links to official report forms |
+| **Impact** | Scoreboard (fix rate, typical days to fix, by area, waiting the longest); **safety check** that flags reports within 250 m of fatal crashes from federal NHTSA FARS records, with a crash layer on the heatmap; **fair share** view comparing fix speed in lower-, middle-, and higher-income census tracts (U.S. Census ACS) |
 | **Close the loop** | Staff dashboard (open, needs action, mine, quiet 3+ weeks, fixed) with assign-to-me and one-tap next steps; "Mark fixed" with an after photo notifies everyone who backed the report; reports quiet for 3 weeks nudge followers, and Cony drafts a polite follow-up; printable council packet with a QR code, map, photos, and timeline |
 | **Cony (AI helper)** | Animated traffic-cone mascot that thinks, talks, and hops, with moods (hard hat while crews work, sad when a report goes quiet, a party when it's fixed); **snap and go** fills in a report from a photo; **say it** turns a voice note into a report; reports and chats work in any language, with the request written in English; chat replies stream in word by word as they're written, formal-request drafter with suggested urgency, and an automatic first review of every new report |
 | **Accounts** | Email verification, resend link, forgot/reset password, 8-character minimum, unsubscribe links in every email |
@@ -88,6 +89,8 @@ Locally you don't need any keys. Without email set up, new accounts are signed i
 |---|---|
 | `GROQ_API_KEY` | Free AI key from console.groq.com (or use `OPENAI_API_KEY` / `GEMINI_API_KEY`) |
 | `GROQ_MODEL` | Optional model override, e.g. `openai/gpt-oss-120b` |
+| `GROQ_VISION_MODEL`, `GROQ_SPEECH_MODEL` | Optional overrides for Cony's photo reading and speech-to-text |
+| `CENSUS_API_KEY` | Free key from api.census.gov/data/key_signup.html. Turns on the "Fair share" income comparison on the Impact page |
 | `BREVO_API_KEY` | Sends verification, reset, and update emails over HTTPS |
 | `SMTP_FROM` | Sender, e.g. `Sidewalk <you@example.com>` (must be verified in Brevo) |
 | `APP_URL` | Public URL of the site, used in email links |
@@ -114,6 +117,7 @@ jobs.js          Background jobs (notifications, threshold checks, cleanup)
 notify.js        Email and phone notifications from one place
 public/packet.*  Printable council packet (/packet/:id)
 public/responsibility.js   Best guess at who maintains a spot, from OpenStreetMap road data
+impact.js        Scoreboard, census tract and income lookups, nearby fatal crashes (background jobs, cached)
 public/privacy.html, terms.html, ai.html, guidelines.html   Policy pages
 docs/screenshots Images used in this README
 ```
