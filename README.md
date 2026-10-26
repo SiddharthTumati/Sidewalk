@@ -1,6 +1,6 @@
 # Sidewalk
 
-**What's broken on your block?** Sidewalk lets residents of North and South Carolina pin neighborhood infrastructure problems (potholes, dark streetlights, missing curb ramps, park issues) on a map, rally neighbors behind them, and follow each one until it's fixed.
+**What needs fixing on your block?** Sidewalk lets residents of North and South Carolina pin neighborhood infrastructure problems (potholes, dark streetlights, missing curb ramps, park issues) on a map, rally neighbors behind them, and follow each one until it's fixed.
 
 **Live site:** https://sidewalk-production-4704.up.railway.app
 
